@@ -11,6 +11,9 @@ package MogileFS::Plugin::FilePaths;
 use strict;
 use warnings;
 
+our $VERSION = '0.00_01';
+$VERSION = eval $VERSION;
+
 use MogileFS::Worker::Query;
 use MogileFS::Plugin::MetaData;
 
