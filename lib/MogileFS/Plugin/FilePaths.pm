@@ -1,4 +1,4 @@
-# FilePaths plugin for MogileFS, by xb95
+# FilePaths plugin for MogileFS, by xb95 and hachi
 
 #
 # This plugin enables full pathing support within MogileFS, for creating files,
@@ -11,7 +11,7 @@ package MogileFS::Plugin::FilePaths;
 use strict;
 use warnings;
 
-our $VERSION = '0.00_01';
+our $VERSION = '0.01';
 $VERSION = eval $VERSION;
 
 use MogileFS::Worker::Query;
