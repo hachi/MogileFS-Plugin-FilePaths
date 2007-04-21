@@ -47,4 +47,3 @@ find %{buildroot}%{_prefix}             \
 %files
 %defattr(-,root,root)
 %{_prefix}/lib/*
-%{_prefix}/share/man
