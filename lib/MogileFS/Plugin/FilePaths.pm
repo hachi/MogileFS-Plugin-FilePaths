@@ -227,6 +227,53 @@ sub load {
         return $self->ok_line( \%res );
     });
 
+    MogileFS::register_worker_command( 'filepaths_rename', sub {
+        my MogileFS::Worker::Query $self = shift;
+        my $args = shift;
+
+        my $dmid = $self->check_domain($args)
+            or return $self->err_line('domain_not_found');
+
+        return $self->err_line("plugin_not_active_for_domain")
+            unless _check_dmid($dmid);
+
+        return $self->err_line("bad_argcount")
+            unless $args->{argcount} == 2;
+
+        my ($old_path, $old_name) = _parse_path($args->{arg1});
+
+        return $self->err_line("badly_formed_orig")
+            unless defined($old_path) && length($old_path) &&
+                   defined($old_name) && length($old_name);
+
+        my ($new_path, $new_name) = _parse_path($args->{arg2});
+
+        return $self->err_line("badly_formed_new")
+            unless defined($new_path) && length($new_path) &&
+                   defined($new_name) && length($new_name);
+
+        # I'd really like to lock on this operation at this point, but I find the whole idea to be rather
+        # sad for the number of locks I would want to hold. Going to think about this instead and hope
+        # nobody finds a way to make this race.
+
+        # LOCK rename
+
+        my $old_parentid = load_path($dmid, $old_path);
+        my $new_parentid = vivify_path($dmid, $new_path);
+
+        my $dbh = Mgd::get_dbh();
+        return undef unless $dbh;
+
+        $dbh->do('UPDATE plugin_filepaths_paths SET parentnodeid=?, nodename=? WHERE parentnodeid=? AND nodename=?', undef,
+                 $new_parentid, $new_name, $old_parentid, $old_name);
+
+        # UNLOCK rename
+
+        return $self->err_line("rename_failed") if $dbh->err;
+
+        return $self->ok_line();
+    });
+
     return 1;
 }
 
