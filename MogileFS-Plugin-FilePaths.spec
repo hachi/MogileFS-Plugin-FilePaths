@@ -1,5 +1,5 @@
 name:      perl-MogileFS-Plugin-FilePaths
-summary:   perl-MogileFS-Plugin-FilePaths - MogileFS Tracker plugin to reprepsent a traditional unix filesystem in mogilefs.
+summary:   perl-MogileFS-Plugin-FilePaths - MogileFS Tracker plugin to represent a traditional unix filesystem in mogilefs.
 version:   0.02
 release:   1
 vendor:    Jonathan Steinert <hachi@cpan.org>
@@ -12,7 +12,7 @@ source:    MogileFS-Plugin-FilePaths-%{version}.tar.gz
 requires:  perl-MogileFS-Plugin-FilePaths
 
 %description
-MogileFS Tracker plugin to reprepsent a traditional unix filesystem in mogilefs.
+MogileFS Tracker plugin to represent a traditional unix filesystem in mogilefs.
 
 %prep
 rm -rf "%{buildroot}"

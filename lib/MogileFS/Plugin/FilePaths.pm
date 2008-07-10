@@ -20,7 +20,7 @@ use MogileFS::Plugin::MetaData;
 # called when this plugin is loaded, this sub must return a true value in order for
 # MogileFS to consider the plugin to have loaded successfully.  if you return a
 # non-true value, you MUST NOT install any handlers or other changes to the system.
-# if you install something here, you MUST uninstall it in the unload sub.
+# if you install something here, you MUST un-install it in the unload sub.
 
 sub _parse_path {
     my $fullpath = shift;
@@ -278,7 +278,7 @@ sub load {
 }
 
 # this sub is called at the end or when the module is being unloaded, this needs to
-# unregister any registered methods, etc.  you MUST uninstall everything that the
+# unregister any registered methods, etc.  you MUST un-install everything that the
 # plugin has previously installed.
 sub unload {
 
