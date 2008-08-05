@@ -11,7 +11,7 @@ package MogileFS::Plugin::FilePaths;
 use strict;
 use warnings;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 $VERSION = eval $VERSION;
 
 use MogileFS::Worker::Query;
@@ -264,8 +264,8 @@ sub load {
         my $dbh = Mgd::get_dbh();
         return undef unless $dbh;
 
-        $dbh->do('UPDATE plugin_filepaths_paths SET parentnodeid=?, nodename=? WHERE parentnodeid=? AND nodename=?', undef,
-                 $new_parentid, $new_name, $old_parentid, $old_name);
+        $dbh->do('UPDATE plugin_filepaths_paths SET parentnodeid=?, nodename=? WHERE dmid=? AND parentnodeid=? AND nodename=?', undef,
+                 $new_parentid, $new_name, $dmid, $old_parentid, $old_name);
 
         # UNLOCK rename
 

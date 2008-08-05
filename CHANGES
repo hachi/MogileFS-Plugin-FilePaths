@@ -1,3 +1,6 @@
+0.03
+   -- Fix SQL for rename command, wasn't hitting the DB index.
+
 0.02
    -- Add rename command.
 
