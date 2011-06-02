@@ -106,6 +106,8 @@ sub load {
     # and now magic conversions that make the rest of the MogileFS commands work
     # without having to understand how the path system works
     MogileFS::register_global_hook( 'cmd_get_paths', \&_path_to_key );
+    MogileFS::register_global_hook( 'cmd_file_info', \&_path_to_key );
+    MogileFS::register_global_hook( 'cmd_file_debug', \&_path_to_key );
     MogileFS::register_global_hook( 'cmd_delete', sub {
         my $args = shift;
         return 1 unless _check_dmid($args->{dmid});
