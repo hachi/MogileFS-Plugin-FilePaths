@@ -139,14 +139,11 @@ sub load {
         my $dmid = $self->check_domain($args)
             or return $self->err_line('domain_not_found');
 
-        my $dbh = Mgd::get_dbh();
-        return undef unless $dbh;
-
-        $dbh->do("REPLACE INTO plugin_filepaths_domains (dmid) VALUES (?)", undef, $dmid);
-
-        return $self->err_line('unable_to_enable', "Unable to enable the filepaths plugin: " . $dbh->errstr)
-            if $dbh->err;
-
+        # enable the FilePaths plugin for the specified domain
+        my $sto = Mgd::get_store();
+        unless ($sto->plugin_filepaths_enable_domain($dmid)) {
+            return $self->err_line('unable_to_enable', 'Unable to enable the FilePaths plugin');
+        }
         return $self->ok_line;
     });
 
@@ -159,14 +156,11 @@ sub load {
         my $dmid = $self->check_domain($args)
             or return $self->err_line('domain_not_found');
 
-        my $dbh = Mgd::get_dbh();
-        return undef unless $dbh;
-
-        $dbh->do("DELETE FROM plugin_filepaths_domains WHERE dmid = ?", undef, $dmid);
-
-        return $self->err_line('unable_to_disable', "Unable to enable the filepaths plugin: " . $dbh->errstr)
-            if $dbh->err;
-
+        # disable the FilePaths plugin for the specified domain
+        my $sto = Mgd::get_store();
+        unless ($sto->plugin_filepaths_disable_domain($dmid)) {
+            return $self->err_line('unable_to_disable', 'Unable to disable the FilePaths plugin');
+        }
         return $self->ok_line;
     });
 
@@ -496,6 +490,30 @@ sub TABLE_plugin_filepaths_domains {
         dmid SMALLINT UNSIGNED NOT NULL,
         PRIMARY KEY (dmid)
 )"
+}
+
+# enable the filepaths plugin on the specified domain
+sub plugin_filepaths_enable_domain {
+    my $self = shift;
+    my ($dmid) = @_;
+    my $dbh = $self->dbh;
+    $self->retry_on_deadlock(sub {
+        $dbh->do($self->ignore_replace . 'INTO plugin_filepaths_domains (dmid) VALUES (?)', undef, $dmid);
+    });
+    return undef if($dbh->err);
+    return 1;
+}
+
+# disable the filepaths plugin on the specified domain
+sub plugin_filepaths_disable_domain {
+    my $self = shift;
+    my ($dmid) = @_;
+    my $dbh = $self->dbh;
+    $self->retry_on_deadlock(sub {
+        $dbh->do('DELETE FROM plugin_filepaths_domains WHERE dmid = ?', undef, $dmid);
+    });
+    return undef if($dbh->err);
+    return 1;
 }
 
 # retrieves an arrayref of dmids the filepaths plugin is active for
