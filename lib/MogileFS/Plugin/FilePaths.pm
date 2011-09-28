@@ -448,7 +448,7 @@ sub _path_to_key {
     return 1;
 }
 
-my %active_dmids;
+my $active_dmids = {};
 my $last_dmid_check = 0;
 
 sub _check_dmid {
@@ -460,29 +460,20 @@ sub _check_dmid {
     if ($time >= $last_dmid_check + 15) {
         $last_dmid_check = $time;
 
-        unless (_load_dmids()) {
+        my $sto = Mgd::get_store();
+        my $dmids = $sto->plugin_filepaths_get_active_dmids();
+
+        if (defined $dmids) {
+            $active_dmids = {};
+            foreach (@$dmids) {
+                $active_dmids->{$_} = 1;
+            }
+        } else {
             warn "Unable to load active domains list for filepaths plugin, using old list";
         }
     }
 
-    return $active_dmids{$dmid};
-}
-
-sub _load_dmids {
-    my $dbh = Mgd::get_dbh();
-    return undef unless $dbh;
-
-    my $sth = $dbh->prepare('SELECT dmid FROM plugin_filepaths_domains');
-    $sth->execute();
-
-    return undef if $sth->err;
-
-    %active_dmids = ();
-
-    while (my $dmid = $sth->fetchrow_array) {
-        $active_dmids{$dmid} = 1;
-    }
-    return 1;
+    return $active_dmids->{$dmid};
 }
 
 package MogileFS::Store;
@@ -509,6 +500,15 @@ sub TABLE_plugin_filepaths_domains {
         dmid SMALLINT UNSIGNED NOT NULL,
         PRIMARY KEY (dmid)
 )"
+}
+
+# retrieves an arrayref of dmids the filepaths plugin is active for
+sub plugin_filepaths_get_active_dmids {
+    my $self = shift;
+    my $dbh = $self->dbh;
+    my $dmids = $dbh->selectcol_arrayref('SELECT dmid FROM plugin_filepaths_domains');
+    return undef if $dbh->err;
+    return $dmids;
 }
 
 __PACKAGE__->add_extra_tables("plugin_filepaths_paths", "plugin_filepaths_domains");
