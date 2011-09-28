@@ -337,11 +337,11 @@ sub _find_node {
     return $nodeid if $nodeid;
 
     if ($vivify) {
-        $dbh->do('INSERT INTO plugin_filepaths_paths (nodeid, dmid, parentnodeid, nodename, fid) ' .
-                 'VALUES (NULL, ?, ?, ?, NULL)', undef, $dmid, $parentnodeid, $node);
-        return undef if $dbh->err;
-
-        $nodeid = $dbh->{mysql_insertid}+0;
+        $nodeid = $sto->plugin_filepaths_add_node(
+            'dmid'         => $dmid,
+            'parentnodeid' => $parentnodeid,
+            'nodename'     => $node,
+        );
     }
 
     return undef unless $nodeid && $nodeid > 0;
@@ -521,6 +521,20 @@ sub plugin_filepaths_get_active_dmids {
     my $dmids = $dbh->selectcol_arrayref('SELECT dmid FROM plugin_filepaths_domains');
     return undef if $dbh->err;
     return $dmids;
+}
+
+# add a new node to the database
+sub plugin_filepaths_add_node {
+    my $self = shift;
+    my %arg  = $self->_valid_params([qw(dmid parentnodeid nodename fid)], @_);
+
+    return $self->retry_on_deadlock(sub {
+        my $dbh = $self->dbh;
+        $dbh->do('INSERT INTO plugin_filepaths_paths (dmid, parentnodeid, nodename, fid) '.
+                 'VALUES (?,?,?,?) ', undef,
+                 @arg{'dmid', 'parentnodeid', 'nodename', 'fid'});
+        return $dbh->last_insert_id(undef, undef, 'plugin_filepaths_paths', 'nodeid')
+    });
 }
 
 # return the nodeid for the specified node
