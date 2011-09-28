@@ -332,10 +332,8 @@ sub _find_node {
     my ($dbh, $dmid, $parentnodeid, $node, $vivify) = @_;
     return undef unless $dbh && $dmid && defined $parentnodeid && $node;
 
-    my $nodeid = $dbh->selectrow_array('SELECT nodeid FROM plugin_filepaths_paths ' .
-                                       'WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
-                                       undef, $dmid, $parentnodeid, $node);
-    return undef if $dbh->err;
+    my $sto = Mgd::get_store();
+    my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $parentnodeid, $node);
     return $nodeid if $nodeid;
 
     if ($vivify) {
@@ -523,6 +521,18 @@ sub plugin_filepaths_get_active_dmids {
     my $dmids = $dbh->selectcol_arrayref('SELECT dmid FROM plugin_filepaths_domains');
     return undef if $dbh->err;
     return $dmids;
+}
+
+# return the nodeid for the specified node
+sub plugin_filepaths_get_nodeid {
+    my $self = shift;
+    my ($dmid, $parentnodeid, $nodename) = @_;
+    my $dbh = $self->dbh;
+    my $nodeid = $dbh->selectrow_array('SELECT nodeid FROM plugin_filepaths_paths ' .
+                                       'WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
+                                       undef, $dmid, $parentnodeid, $nodename);
+    return undef if $dbh->err;
+    return $nodeid;
 }
 
 # takes a domain, parentnodeid, and filename and returns a MogileFS::FID object
