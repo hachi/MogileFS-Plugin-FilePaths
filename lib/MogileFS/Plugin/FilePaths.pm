@@ -309,14 +309,10 @@ sub _traverse_path {
     my @paths = grep { $_ } split /\//, $path;
     return 0 unless @paths; #toplevel
 
-    # FIXME: validate_dbh()? or not needed? assumed done elsewhere? bleh.
-    my $dbh = Mgd::get_dbh();
-    return undef unless $dbh;
-
     my $parentnodeid = 0;
     foreach my $node (@paths) {
         # try to get the id for this node
-        my $nodeid = _find_node($dbh, $dmid, $parentnodeid, $node, $vivify);
+        my $nodeid = _find_node($dmid, $parentnodeid, $node, $vivify);
         return undef unless $nodeid;
 
         # this becomes the new parent
@@ -329,8 +325,8 @@ sub _traverse_path {
 
 # checks to see if a node exists, and if not, creates it if $vivify is set
 sub _find_node {
-    my ($dbh, $dmid, $parentnodeid, $node, $vivify) = @_;
-    return undef unless $dbh && $dmid && defined $parentnodeid && $node;
+    my ($dmid, $parentnodeid, $node, $vivify) = @_;
+    return undef unless $dmid && defined $parentnodeid && $node;
 
     my $sto = Mgd::get_store();
     my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $parentnodeid, $node);
@@ -356,7 +352,7 @@ sub set_file_mapping {
     my $dbh = Mgd::get_dbh();
     return undef unless $dbh;
 
-    my $nodeid = _find_node($dbh, $dmid, $parentnodeid, $filename, 1);
+    my $nodeid = _find_node($dmid, $parentnodeid, $filename, 1);
     return undef unless $nodeid;
 
     $dbh->do("UPDATE plugin_filepaths_paths SET fid = ? WHERE nodeid = ?", undef, $fid, $nodeid);
