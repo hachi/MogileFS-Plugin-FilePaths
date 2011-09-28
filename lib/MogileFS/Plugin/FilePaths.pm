@@ -377,15 +377,11 @@ sub get_file_mapping {
     my ($dmid, $parentnodeid, $filename,) = @_;
     return undef unless $dmid && defined $parentnodeid && $filename;
 
-    my $dbh = Mgd::get_dbh();
-    return undef unless $dbh;
+    my $sto = Mgd::get_store();
+    my $fid = $sto->plugin_filepaths_get_fid_by_mapping($dmid, $parentnodeid, $filename);
 
-    my $fid = $dbh->selectrow_array('SELECT fid FROM plugin_filepaths_paths ' .
-                                    'WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
-                                    undef, $dmid, $parentnodeid, $filename);
-    return undef if $dbh->err;
-    return undef unless $fid && $fid > 0;
-    return $fid;
+    return undef unless $fid;
+    return $fid->id;
 }
 
 sub delete_file_mapping {
@@ -509,6 +505,20 @@ sub plugin_filepaths_get_active_dmids {
     my $dmids = $dbh->selectcol_arrayref('SELECT dmid FROM plugin_filepaths_domains');
     return undef if $dbh->err;
     return $dmids;
+}
+
+# takes a domain, parentnodeid, and filename and returns a MogileFS::FID object
+# for the found file
+sub plugin_filepaths_get_fid_by_mapping {
+    my $self = shift;
+    my ($dmid, $parentnodeid, $filename) = @_;
+
+    my $dbh = $self->dbh;
+    my ($fid) = $dbh->selectrow_array('SELECT fid FROM plugin_filepaths_paths ' .
+                                    'WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
+                                    undef, $dmid, $parentnodeid, $filename);
+    return undef unless $fid;
+    return MogileFS::FID->new($fid);
 }
 
 __PACKAGE__->add_extra_tables("plugin_filepaths_paths", "plugin_filepaths_domains");
