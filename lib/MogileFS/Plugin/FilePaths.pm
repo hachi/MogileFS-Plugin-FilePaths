@@ -74,10 +74,10 @@ sub load {
         return 0 unless defined $parentnodeid;
 
         # see if this file exists already
-        my $oldfid = MogileFS::Plugin::FilePaths::get_file_mapping( $args->{dmid}, $parentnodeid, $filename );
-        if (defined $oldfid && $oldfid) {
-            my $fid = MogileFS::FID->new($oldfid);
-            $fid->delete;
+        my $sto = Mgd::get_store();
+        my $oldfid = $sto->plugin_filepaths_get_fid_by_mapping($args->{dmid}, $parentnodeid, $filename);
+        if ($oldfid) {
+            $oldfid->delete;
         }
 
         my $fid = $args->{fid};
