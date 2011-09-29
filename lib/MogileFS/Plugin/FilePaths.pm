@@ -198,7 +198,8 @@ sub load {
         # get files in path, return as an array
         my %res;
         my $ct = 0;
-        my @nodes = MogileFS::Plugin::FilePaths::list_directory( $dmid, $nodeid );
+        my $sto = Mgd::get_store();
+        my @nodes = $sto->plugin_filepaths_get_nodes_by_mapping($dmid, $nodeid);
 
         my $node_count = $res{'files'} = scalar @nodes;
 
@@ -388,26 +389,6 @@ sub delete_file_mapping {
     return $sto->plugin_filepaths_delete_node($nodeid);
 }
 
-sub list_directory {
-    my ($dmid, $nodeid) = @_;
-
-    my $dbh = Mgd::get_dbh();
-    return undef unless $dbh;
-
-    my $sth = $dbh->prepare('SELECT nodename, fid FROM plugin_filepaths_paths ' .
-                            'WHERE dmid = ? AND parentnodeid = ?');
-
-    $sth->execute($dmid, $nodeid);
-
-    my @return;
-
-    while (my ($nodename, $fid) = $sth->fetchrow_array) {
-        push @return, [$nodename, $fid];
-    }
-
-    return @return;
-}
-
 # generic sub that converts a file path to a key name that
 # MogileFS will understand
 sub _path_to_key {
@@ -572,6 +553,23 @@ sub plugin_filepaths_get_nodeid {
                                        undef, $dmid, $parentnodeid, $nodename);
     return undef if $dbh->err;
     return $nodeid;
+}
+
+# get all the nodes that are child nodes of the specified parent node
+sub plugin_filepaths_get_nodes_by_mapping {
+    my $self = shift;
+    my ($dmid, $parentnodeid) = @_;
+    my $dbh = $self->dbh;
+    my $sth = $dbh->prepare('SELECT nodename, fid FROM plugin_filepaths_paths ' .
+                            'WHERE dmid = ? AND parentnodeid = ?');
+    $sth->execute($dmid, $parentnodeid);
+
+    my @nodes;
+    while (my ($nodename, $fid) = $sth->fetchrow_array) {
+        push @nodes, [$nodename, $fid];
+    }
+
+    return @nodes;
 }
 
 # takes a domain, parentnodeid, and filename and returns a MogileFS::FID object
