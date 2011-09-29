@@ -255,15 +255,16 @@ sub load {
         my $old_parentid = load_path($dmid, $old_path);
         my $new_parentid = vivify_path($dmid, $new_path);
 
-        my $dbh = Mgd::get_dbh();
-        return undef unless $dbh;
-
-        $dbh->do('UPDATE plugin_filepaths_paths SET parentnodeid=?, nodename=? WHERE dmid=? AND parentnodeid=? AND nodename=?', undef,
-                 $new_parentid, $new_name, $dmid, $old_parentid, $old_name);
+        my $sto = Mgd::get_store();
+        my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $old_parentid, $old_name);
+        my $rv = $sto->plugin_filepaths_update_node($nodeid, {
+            'parentnodeid' => $new_parentid,
+            'nodename'     => $new_name,
+        });
 
         # UNLOCK rename
 
-        return $self->err_line("rename_failed") if $dbh->err;
+        return $self->err_line("rename_failed") unless $rv;
 
         return $self->ok_line();
     });
