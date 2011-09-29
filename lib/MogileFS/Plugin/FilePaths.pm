@@ -17,11 +17,6 @@ $VERSION = eval $VERSION;
 use MogileFS::Worker::Query;
 use MogileFS::Plugin::MetaData;
 
-# called when this plugin is loaded, this sub must return a true value in order for
-# MogileFS to consider the plugin to have loaded successfully.  if you return a
-# non-true value, you MUST NOT install any handlers or other changes to the system.
-# if you install something here, you MUST un-install it in the unload sub.
-
 sub _parse_path {
     my $fullpath = shift;
     return unless defined($fullpath) and length($fullpath);
@@ -30,6 +25,10 @@ sub _parse_path {
     return ($path, $file);
 }
 
+# called when this plugin is loaded, this sub must return a true value in order for
+# MogileFS to consider the plugin to have loaded successfully.  if you return a
+# non-true value, you MUST NOT install any handlers or other changes to the system.
+# if you install something here, you MUST un-install it in the unload sub.
 sub load {
 
     # we want to remove the key being passed to create_open, as it is going to contain
