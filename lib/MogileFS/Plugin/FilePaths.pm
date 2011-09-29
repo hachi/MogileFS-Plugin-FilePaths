@@ -349,14 +349,13 @@ sub set_file_mapping {
     my ($dmid, $parentnodeid, $filename, $fid) = @_;
     return undef unless $dmid && defined $parentnodeid && $filename && $fid;
 
-    my $dbh = Mgd::get_dbh();
-    return undef unless $dbh;
-
     my $nodeid = _find_node($dmid, $parentnodeid, $filename, 1);
     return undef unless $nodeid;
 
-    $dbh->do("UPDATE plugin_filepaths_paths SET fid = ? WHERE nodeid = ?", undef, $fid, $nodeid);
-    return undef if $dbh->err;
+    my $sto = Mgd::get_store();
+    unless ($sto->plugin_filepaths_update_node($nodeid, {'fid' => $fid})) {
+        return undef;
+    }
     return $nodeid;
 }
 
@@ -531,6 +530,21 @@ sub plugin_filepaths_add_node {
                  @arg{'dmid', 'parentnodeid', 'nodename', 'fid'});
         return $dbh->last_insert_id(undef, undef, 'plugin_filepaths_paths', 'nodeid')
     });
+}
+
+# update the specified node in the database
+sub plugin_filepaths_update_node {
+    my $self = shift;
+    my ($nodeid, $to_update) = @_;
+    my @keys = keys %$to_update;
+    return 1 unless @keys;
+    my $dbh = $self->dbh;
+    $self->retry_on_deadlock(sub {
+        $dbh->do('UPDATE plugin_filepaths_paths SET ' . join('=?, ', @keys) .
+                 '=? WHERE nodeid = ?', undef, @$to_update{@keys}, $nodeid);
+    });
+    return undef if $dbh->err;
+    return 1;
 }
 
 # return the nodeid for the specified node
