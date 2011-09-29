@@ -349,12 +349,18 @@ sub set_file_mapping {
     my ($dmid, $parentnodeid, $filename, $fid) = @_;
     return undef unless $dmid && defined $parentnodeid && $filename && $fid;
 
-    my $nodeid = _find_node($dmid, $parentnodeid, $filename, 1);
-    return undef unless $nodeid;
-
     my $sto = Mgd::get_store();
-    unless ($sto->plugin_filepaths_update_node($nodeid, {'fid' => $fid})) {
-        return undef;
+    my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $parentnodeid, $filename);
+
+    unless ($nodeid) {
+        $nodeid = $sto->plugin_filepaths_add_node(
+            'dmid'         => $dmid,
+            'parentnodeid' => $parentnodeid,
+            'nodename'     => $filename,
+            'fid'          => $fid,
+        );
+    } else {
+        $sto->plugin_filepaths_update_node($nodeid, {'fid' => $fid});
     }
     return $nodeid;
 }
