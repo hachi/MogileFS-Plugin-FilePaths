@@ -14,6 +14,7 @@ use warnings;
 our $VERSION = '0.03';
 $VERSION = eval $VERSION;
 
+use MogileFS::FID;
 use MogileFS::Worker::Query;
 use MogileFS::Plugin::MetaData;
 
@@ -198,20 +199,19 @@ sub load {
         my %res;
         my $ct = 0;
         my @nodes = MogileFS::Plugin::FilePaths::list_directory( $dmid, $nodeid );
-        my $dbh = Mgd::get_dbh();
 
         my $node_count = $res{'files'} = scalar @nodes;
 
         for(my $i = 0; $i < $node_count; $i++) {
-            my ($nodename, $fid) = @{$nodes[$i]};
+            my ($nodename, $fidid) = @{$nodes[$i]};
             my $prefix = "file$i";
             $res{$prefix} = $nodename;
 
-            if ($fid) { # This file is a regular file
+            if ($fidid) { # This file is a regular file
                 $res{"$prefix.type"} = "F";
-                my $length = $dbh->selectrow_array("SELECT length FROM file WHERE fid=?", undef, $fid);
+                my $length = MogileFS::FID->new($fidid)->length;
                 $res{"$prefix.size"} = $length if defined($length);
-                my $metadata = MogileFS::Plugin::MetaData::get_metadata($fid);
+                my $metadata = MogileFS::Plugin::MetaData::get_metadata($fidid);
                 $res{"$prefix.mtime"} = $metadata->{mtime} if $metadata->{mtime};
             } else {    # This file is a directory
                 $res{"$prefix.type"} = "D";
