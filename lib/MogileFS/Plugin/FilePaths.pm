@@ -378,17 +378,13 @@ sub get_file_mapping {
 }
 
 sub delete_file_mapping {
-    my ($dmid, $parentnodeid, $filename,) = @_;
+    my ($dmid, $parentnodeid, $filename) = @_;
     return undef unless $dmid && defined $parentnodeid && $filename;
 
-    my $dbh = Mgd::get_dbh();
-    return undef unless $dbh;
-
-    $dbh->do('DELETE FROM plugin_filepaths_paths WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
-             undef, $dmid, $parentnodeid, $filename);
-
-    return undef if $dbh->err;
-    return 1;
+    my $sto = Mgd::get_store();
+    my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $parentnodeid, $filename);
+    return undef unless $nodeid;
+    return $sto->plugin_filepaths_delete_node($nodeid);
 }
 
 sub list_directory {
@@ -548,6 +544,18 @@ sub plugin_filepaths_update_node {
     $self->retry_on_deadlock(sub {
         $dbh->do('UPDATE plugin_filepaths_paths SET ' . join('=?, ', @keys) .
                  '=? WHERE nodeid = ?', undef, @$to_update{@keys}, $nodeid);
+    });
+    return undef if $dbh->err;
+    return 1;
+}
+
+# delete the specified node from the database
+sub plugin_filepaths_delete_node {
+    my $self = shift;
+    my ($nodeid) = @_;
+    my $dbh = $self->dbh;
+    $self->retry_on_deadlock(sub {
+        $dbh->do('DELETE FROM plugin_filepaths_paths WHERE nodeid = ?', undef, $nodeid);
     });
     return undef if $dbh->err;
     return 1;
