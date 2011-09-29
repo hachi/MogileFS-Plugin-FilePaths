@@ -120,7 +120,8 @@ sub load {
         return 0 unless defined $parentnodeid;
 
         # get the fid of the file, bail out if it doesn't have one (directory nodes)
-        my $fid = MogileFS::Plugin::FilePaths::get_file_mapping( $args->{dmid}, $parentnodeid, $filename );
+        my $sto = Mgd::get_store();
+        my $fid = $sto->plugin_filepaths_get_fid_by_mapping($args->{dmid}, $parentnodeid, $filename);
         return 0 unless $fid;
 
         # great, delete this file
@@ -128,7 +129,7 @@ sub load {
         # FIXME What should happen if this delete fails?
 
         # now pretend they asked for it and continue
-        $args->{key} = "fid:$fid";
+        $args->{key} = 'fid:' . $fid->id;
     });
 
     MogileFS::register_worker_command( 'filepaths_enable', sub {
@@ -367,18 +368,6 @@ sub set_file_mapping {
     return $nodeid;
 }
 
-# given a domain and parent node and filename, return the fid
-sub get_file_mapping {
-    my ($dmid, $parentnodeid, $filename,) = @_;
-    return undef unless $dmid && defined $parentnodeid && $filename;
-
-    my $sto = Mgd::get_store();
-    my $fid = $sto->plugin_filepaths_get_fid_by_mapping($dmid, $parentnodeid, $filename);
-
-    return undef unless $fid;
-    return $fid->id;
-}
-
 sub delete_file_mapping {
     my ($dmid, $parentnodeid, $filename) = @_;
     return undef unless $dmid && defined $parentnodeid && $filename;
@@ -407,11 +396,12 @@ sub _path_to_key {
     return 0 unless defined $parentnodeid;
 
     # great, find this file
-    my $fid = MogileFS::Plugin::FilePaths::get_file_mapping( $dmid, $parentnodeid, $filename );
-    return 0 unless defined $fid && $fid > 0;
+    my $sto = Mgd::get_store();
+    my $fid = $sto->plugin_filepaths_get_fid_by_mapping($dmid, $parentnodeid, $filename);
+    return 0 unless $fid;
 
     # now pretend they asked for it and continue
-    $args->{key} = "fid:$fid";
+    $args->{key} = 'fid:' . $fid->id;
     return 1;
 }
 
