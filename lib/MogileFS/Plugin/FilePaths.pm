@@ -122,15 +122,17 @@ sub load {
 
         # get the fid of the file, bail out if it doesn't have one (directory nodes)
         my $sto = Mgd::get_store();
-        my $fid = $sto->plugin_filepaths_get_fid_by_mapping($args->{dmid}, $parentnodeid, $filename);
-        return 0 unless $fid;
+        my $node = $sto->plugin_filepaths_get_node_by_parent($args->{dmid}, $parentnodeid, $filename);
+        return 0 unless $node;
+        my $fidid = $node->fidid;
+        return 0 unless $fidid;
 
         # great, delete this file
-        delete_file_mapping( $args->{dmid}, $parentnodeid, $filename );
+        $sto->plugin_filepaths_delete_node($node->id);
         # FIXME What should happen if this delete fails?
 
         # now pretend they asked for it and continue
-        $args->{key} = 'fid:' . $fid->id;
+        $args->{key} = 'fid:' . $fidid;
     });
 
     MogileFS::register_worker_command( 'filepaths_enable', sub {

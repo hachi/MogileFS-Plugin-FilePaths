@@ -27,6 +27,12 @@ sub new_from_db_row {
 
 sub id { $_[0]{nodeid} }
 
+sub fidid {
+    my $self = shift;
+    $self->_load;
+    return $self->{fid};
+}
+
 # force loading, or die.
 sub _load {
     return 1 if $_[0]{_loaded};
@@ -50,6 +56,12 @@ sub _tryload {
     $self->{$_} = $row->{$_} foreach qw(nodename dmid parentnodeid fid);
     $self->{_loaded} = 1;
     return 1;
+}
+
+sub fid {
+    my $fidid = $_[0]->fidid;
+    return MogileFS::FID->new($fidid) if($fidid);
+    return undef;
 }
 
 1;
