@@ -6,7 +6,7 @@ use Carp qw(croak);
 
 sub new {
     my ($class, $nodeid) = @_;
-    croak("Invalid nodeid") unless $nodeid;
+    croak("Invalid nodeid") unless defined($nodeid);
     return bless {
         nodeid       => $nodeid,
         nodename     => undef,
@@ -38,6 +38,13 @@ sub _load {
 sub _tryload {
     return 1 if $_[0]{_loaded};
     my $self = shift;
+
+    # special case for root directory node
+    if($self->{nodeid} == 0) {
+        $self->{_loaded} = 1;
+        return 1;
+    }
+
     my $row = Mgd::get_store()->plugin_filepaths_node_row_from_nodeid($self->{nodeid})
         or return 0;
     $self->{$_} = $row->{$_} foreach qw(nodename dmid parentnodeid fid);

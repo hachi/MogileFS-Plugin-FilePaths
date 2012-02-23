@@ -294,7 +294,8 @@ sub unload {
 sub vivify_path {
     my ($dmid, $path) = @_;
     return undef unless $dmid && $path;
-    return _traverse_path($dmid, $path, 1);
+    my $node = _traverse_path($dmid, $path, 1);
+    return $node ? $node->id : undef;
 }
 
 # called to load the nodeid of the final element in a path, which is useful for finding
@@ -302,7 +303,8 @@ sub vivify_path {
 sub load_path {
     my ($dmid, $path) = @_;
     return undef unless $dmid && $path;
-    return _traverse_path($dmid, $path, 0);
+    my $node = _traverse_path($dmid, $path, 0);
+    return $node ? $node->id : undef;
 }
 
 # does the internal work of traversing a path
@@ -310,42 +312,40 @@ sub _traverse_path {
     my ($dmid, $path, $vivify) = @_;
     return undef unless $dmid && $path;
 
-    my @paths = grep { $_ } split /\//, $path;
-    return 0 unless @paths; #toplevel
+    # start with the root path node
+    my $node = MogileFS::Plugin::FilePaths::Node->new(0);
 
-    my $parentnodeid = 0;
-    foreach my $node (@paths) {
-        # try to get the id for this node
-        my $nodeid = _find_node($dmid, $parentnodeid, $node, $vivify);
-        return undef unless $nodeid;
-
-        # this becomes the new parent
-        $parentnodeid = $nodeid;
+    # recurse the specified path
+    foreach my $part (grep { $_ } split /\//, $path) {
+        # look for the current path part
+        $node = _find_node($dmid, $node->id, $part, $vivify);
+        return undef unless $node;
     }
 
-    # we're done, so the parentnodeid is what we return
-    return $parentnodeid;
+    # we're done, so return the most recent node
+    return $node;
 }
 
 # checks to see if a node exists, and if not, creates it if $vivify is set
 sub _find_node {
-    my ($dmid, $parentnodeid, $node, $vivify) = @_;
-    return undef unless $dmid && defined $parentnodeid && $node;
+    my ($dmid, $parentnodeid, $name, $vivify) = @_;
+    return undef unless $dmid && defined $parentnodeid && $name;
 
     my $sto = Mgd::get_store();
-    my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $parentnodeid, $node);
-    return $nodeid if $nodeid;
+    my $node = $sto->plugin_filepaths_get_node_by_parent($dmid, $parentnodeid, $name);
+    return $node if $node;
 
     if ($vivify) {
-        $nodeid = $sto->plugin_filepaths_add_node(
+        my $nodeid = $sto->plugin_filepaths_add_node(
             'dmid'         => $dmid,
             'parentnodeid' => $parentnodeid,
-            'nodename'     => $node,
+            'nodename'     => $name,
         );
+
+        return MogileFS::Plugin::FilePaths::Node->new($nodeid) if $nodeid && $nodeid > 0;
     }
 
-    return undef unless $nodeid && $nodeid > 0;
-    return $nodeid;
+    return undef;
 }
 
 # sets the mapping of a file from a name to a fid
