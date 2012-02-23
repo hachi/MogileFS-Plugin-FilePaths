@@ -17,6 +17,7 @@ $VERSION = eval $VERSION;
 use MogileFS::FID;
 use MogileFS::Worker::Query;
 use MogileFS::Plugin::MetaData;
+use MogileFS::Plugin::FilePaths::Node;
 
 sub _parse_path {
     my $fullpath = shift;
@@ -531,6 +532,27 @@ sub plugin_filepaths_delete_node {
     });
     return undef if $dbh->err;
     return 1;
+}
+
+#returns a hash ref containing
+sub plugin_filepaths_node_row_from_nodeid {
+    my ($self, $nodeid) = @_;
+    return $self->dbh->selectrow_hashref("SELECT nodeid, dmid, parentnodeid, nodename, fid ".
+                                         "FROM plugin_filepaths_paths WHERE nodeid=?",
+                                         undef, $nodeid);
+}
+
+# return the node for the specified node
+sub plugin_filepaths_get_node_by_parent {
+    my $self = shift;
+    my ($dmid, $parentnodeid, $nodename) = @_;
+    my $dbh = $self->dbh;
+    my $row = $dbh->selectrow_hashref('SELECT nodeid, dmid, parentnodeid, nodename, fid ' .
+                                      'FROM plugin_filepaths_paths ' .
+                                      'WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
+                                      undef, $dmid, $parentnodeid, $nodename);
+    return undef if !$row || $dbh->err;
+    return MogileFS::Plugin::FilePaths::Node->new_from_db_row($row);
 }
 
 # return the nodeid for the specified node
