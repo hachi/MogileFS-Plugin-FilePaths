@@ -380,8 +380,7 @@ sub _path_to_key {
     return 1 unless _check_dmid($dmid);
 
     # ensure we got a valid seeming path and filename
-    my ($path, $filename) =
-        ($args->{key} =~ m!^(/(?:[\w\-\.]+/)*)([\w\-\.]+)$!) ? ($1, $2) : (undef, undef);
+    my ($path, $filename) = _parse_path($args->{key});
     return 0 unless $path && $filename;
 
     # now try to get the end of the path
