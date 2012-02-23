@@ -268,12 +268,16 @@ sub load {
 
         # LOCK rename
 
+        # find the node being renamed
         my $old_parentid = load_path($dmid, $old_path);
-        my $new_parentid = vivify_path($dmid, $new_path);
-
         my $sto = Mgd::get_store();
-        my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $old_parentid, $old_name);
-        my $rv = $sto->plugin_filepaths_update_node($nodeid, {
+        my $node = $sto->plugin_filepaths_get_node_by_parent($dmid, $old_parentid, $old_name);
+        return $self->err_line('path_not_found', 'Path provided was not found in database')
+            unless $node;
+
+        # now vivify the destination path and rename the file
+        my $new_parentid = vivify_path($dmid, $new_path);
+        my $rv = $sto->plugin_filepaths_update_node($node->id, {
             'parentnodeid' => $new_parentid,
             'nodename'     => $new_name,
         });
