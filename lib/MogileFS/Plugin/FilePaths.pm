@@ -75,19 +75,30 @@ sub load {
         my $parentnodeid = MogileFS::Plugin::FilePaths::vivify_path( $args->{dmid}, $path );
         return 0 unless defined $parentnodeid;
 
-        # see if this file exists already
+        # find/create a node to store this file at, track the old FID in order
+        # to delete it after updating the node
         my $sto = Mgd::get_store();
-        my $oldfid = $sto->plugin_filepaths_get_fid_by_mapping($args->{dmid}, $parentnodeid, $filename);
+        my $node = $sto->plugin_filepaths_get_node_by_parent($args->{dmid}, $parentnodeid, $filename);
+        my $oldfid = $node ? $node->fid : undef;
+        if($node) {
+            $sto->plugin_filepaths_update_node($node->id, {'fid' => $args->{fid}});
+        } else {
+            my $nodeid = $sto->plugin_filepaths_add_node(
+                'dmid'         => $args->{dmid},
+                'parentnodeid' => $parentnodeid,
+                'nodename'     => $filename,
+                'fid'          => $args->{fid},
+            );
+            $node = MogileFS::Plugin::FilePaths::Node->new($nodeid);
+        }
+        return 0 unless $node;
+
+        # delete the old FID now that the new FID has been stored
         if ($oldfid) {
             $oldfid->delete;
         }
 
-        my $fid = $args->{fid};
-
-        # and now, setup the mapping
-        my $nodeid = MogileFS::Plugin::FilePaths::set_file_mapping( $args->{dmid}, $parentnodeid, $filename, $fid );
-        return 0 unless $nodeid;
-
+        # store metadata
         if (my $keys = $args->{"plugin.meta.keys"}) {
             my %metadata;
             for (my $i = 0; $i < $keys; $i++) {
@@ -96,7 +107,7 @@ sub load {
                 $metadata{$key} = $value;
             }
 
-            MogileFS::Plugin::MetaData::set_metadata($fid, \%metadata);
+            MogileFS::Plugin::MetaData::set_metadata($args->{fid}, \%metadata);
         }
 
         # we're successful, let's keep the file
@@ -348,27 +359,6 @@ sub _find_node {
     }
 
     return undef;
-}
-
-# sets the mapping of a file from a name to a fid
-sub set_file_mapping {
-    my ($dmid, $parentnodeid, $filename, $fid) = @_;
-    return undef unless $dmid && defined $parentnodeid && $filename && $fid;
-
-    my $sto = Mgd::get_store();
-    my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $parentnodeid, $filename);
-
-    unless ($nodeid) {
-        $nodeid = $sto->plugin_filepaths_add_node(
-            'dmid'         => $dmid,
-            'parentnodeid' => $parentnodeid,
-            'nodename'     => $filename,
-            'fid'          => $fid,
-        );
-    } else {
-        $sto->plugin_filepaths_update_node($nodeid, {'fid' => $fid});
-    }
-    return $nodeid;
 }
 
 # generic sub that converts a file path to a key name that
