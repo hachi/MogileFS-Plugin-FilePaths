@@ -371,16 +371,6 @@ sub set_file_mapping {
     return $nodeid;
 }
 
-sub delete_file_mapping {
-    my ($dmid, $parentnodeid, $filename) = @_;
-    return undef unless $dmid && defined $parentnodeid && $filename;
-
-    my $sto = Mgd::get_store();
-    my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $parentnodeid, $filename);
-    return undef unless $nodeid;
-    return $sto->plugin_filepaths_delete_node($nodeid);
-}
-
 # generic sub that converts a file path to a key name that
 # MogileFS will understand
 sub _path_to_key {
