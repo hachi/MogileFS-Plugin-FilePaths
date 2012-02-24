@@ -27,6 +27,12 @@ sub new_from_db_row {
 
 sub id { $_[0]{nodeid} }
 
+sub nodename {
+    my $self = shift;
+    $self->_load;
+    return $self->{nodename};
+}
+
 sub fidid {
     my $self = shift;
     $self->_load;
@@ -62,6 +68,14 @@ sub fid {
     my $fidid = $_[0]->fidid;
     return MogileFS::FID->new($fidid) if($fidid);
     return undef;
+}
+
+sub is_directory {
+    return !($_[0]->is_file);
+}
+
+sub is_file {
+    return defined($_[0]->fidid);
 }
 
 1;

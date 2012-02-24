@@ -200,7 +200,7 @@ sub load {
             unless $args->{argcount} == 1 && $path && $path =~ /^\//;
 
         # now find the id of the path
-        my $nodeid = MogileFS::Plugin::FilePaths::load_path( $dmid, $path );
+        my $nodeid = load_path( $dmid, $path );
         return $self->err_line('path_not_found', 'Path provided was not found in database')
             unless defined $nodeid;
 
@@ -214,25 +214,45 @@ sub load {
         my %res;
         my $ct = 0;
         my $sto = Mgd::get_store();
-        my @nodes = $sto->plugin_filepaths_get_nodes_by_mapping($dmid, $nodeid);
+        my @nodes = $sto->plugin_filepaths_get_nodes_by_parent($dmid, $nodeid);
 
-        my $node_count = $res{'files'} = scalar @nodes;
+        # get FIDs for all the found nodes
+        my %fids = (
+            map {($_->id, $_)}
+                $sto->plugin_filepaths_load_fids(map {$_->fidid} @nodes)
+        );
 
-        for(my $i = 0; $i < $node_count; $i++) {
-            my ($nodename, $fidid) = @{$nodes[$i]};
+        # add all nodes to the response
+        my $i = 0;
+        foreach my $node (@nodes) {
+            next if(!$node);
+
             my $prefix = "file$i";
-            $res{$prefix} = $nodename;
+            $res{$prefix} = $node->nodename;
 
-            if ($fidid) { # This file is a regular file
-                $res{"$prefix.type"} = "F";
-                my $length = MogileFS::FID->new($fidid)->length;
-                $res{"$prefix.size"} = $length if defined($length);
-                my $metadata = MogileFS::Plugin::MetaData::get_metadata($fidid);
-                $res{"$prefix.mtime"} = $metadata->{mtime} if $metadata->{mtime};
-            } else {    # This file is a directory
+            # This node is a directory
+            if ($node->is_directory) {
                 $res{"$prefix.type"} = "D";
             }
+            # This file is a regular file
+            elsif(my $fid = $fids{$node->fidid} || $node->fid) {
+                # skip this node unless the fid exists
+                next unless $fid->exists;
+
+                $res{"$prefix.type"} = "F";
+                my $length = $fid->length;
+                $res{"$prefix.size"} = $length if defined($length);
+                my $metadata = MogileFS::Plugin::MetaData::get_metadata($fid->id);
+                $res{"$prefix.mtime"} = $metadata->{mtime} if $metadata->{mtime};
+            }
+            # invalid node, don't include it in the response
+            else {
+                next;
+            }
+
+            $i++;
         }
+        $res{'files'} = $i;
 
         return $self->ok_line( \%res );
     });
@@ -540,6 +560,24 @@ sub plugin_filepaths_get_node_by_parent {
     return MogileFS::Plugin::FilePaths::Node->new_from_db_row($row);
 }
 
+# get all the nodes that are child nodes of the specified parent node
+sub plugin_filepaths_get_nodes_by_parent {
+    my $self = shift;
+    my ($dmid, $parentnodeid) = @_;
+    my $dbh = $self->dbh;
+    my $sth = $dbh->prepare('SELECT nodeid, dmid, parentnodeid, nodename, fid ' .
+                            'FROM plugin_filepaths_paths ' .
+                            'WHERE dmid = ? AND parentnodeid = ?');
+    $sth->execute($dmid, $parentnodeid);
+
+    my @nodes;
+    while (my $row = $sth->fetchrow_hashref()) {
+        push @nodes, MogileFS::Plugin::FilePaths::Node->new_from_db_row($row);
+    }
+
+    return @nodes;
+}
+
 # return the nodeid for the specified node
 sub plugin_filepaths_get_nodeid {
     my $self = shift;
@@ -567,6 +605,24 @@ sub plugin_filepaths_get_nodes_by_mapping {
     }
 
     return @nodes;
+}
+
+# load the specified fids from the database
+sub plugin_filepaths_load_fids {
+    my $self = shift;
+    my @fids = @_;
+    return if(!@fids);
+
+    my @ret;
+    my $dbh = $self->dbh;
+    my $sth = $dbh->prepare("SELECT fid, dmid, dkey, length, classid, devcount ".
+                            "FROM   file ".
+                            "WHERE  fid IN (". join(',', (('?') x scalar @fids)) . ")");
+    $sth->execute(@fids);
+    while (my $row = $sth->fetchrow_hashref) {
+        push @ret, MogileFS::FID->new_from_db_row($row);
+    }
+    return @ret;
 }
 
 # takes a domain, parentnodeid, and filename and returns a MogileFS::FID object
