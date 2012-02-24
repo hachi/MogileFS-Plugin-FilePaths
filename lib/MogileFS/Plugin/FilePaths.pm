@@ -204,12 +204,6 @@ sub load {
         return $self->err_line('path_not_found', 'Path provided was not found in database')
             unless $node;
 
-#       TODO This is wrong, but we should throw an error saying 'not a directory'. Requires refactoring
-#            a bit of code to make the 'fid' value available from the last node we fetched.
-#        if (get_file_mapping($nodeid)) {
-#            return $self->err_line('not_a_directory', 'Path provided is not a directory');
-#        }
-
         # get files in path, return as an array
         my %res;
         my $ct = 0;
@@ -357,7 +351,7 @@ sub _traverse_path {
     foreach my $part (grep { $_ } split /\//, $path) {
         # look for the current path part
         $node = _find_node($dmid, $node->id, $part, $vivify);
-        return undef unless $node;
+        return undef unless $node && $node->is_directory;
     }
 
     # we're done, so return the most recent node
