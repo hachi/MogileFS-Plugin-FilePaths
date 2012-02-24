@@ -128,12 +128,12 @@ sub load {
         return 0 unless defined($path) && length($path) && defined($filename) && length($filename);
 
         # now try to get the end of the path
-        my $parentnodeid = MogileFS::Plugin::FilePaths::load_path( $args->{dmid}, $path );
-        return 0 unless defined $parentnodeid;
+        my $parentnode = load_path( $args->{dmid}, $path );
+        return 0 unless $parentnode;
 
         # get the fid of the file, bail out if it doesn't have one (directory nodes)
         my $sto = Mgd::get_store();
-        my $node = $sto->plugin_filepaths_get_node_by_parent($args->{dmid}, $parentnodeid, $filename);
+        my $node = $sto->plugin_filepaths_get_node_by_parent($args->{dmid}, $parentnode->id, $filename);
         return 0 unless $node;
         my $fidid = $node->fidid;
         return 0 unless $fidid;
@@ -200,9 +200,9 @@ sub load {
             unless $args->{argcount} == 1 && $path && $path =~ /^\//;
 
         # now find the id of the path
-        my $nodeid = load_path( $dmid, $path );
+        my $node = load_path( $dmid, $path );
         return $self->err_line('path_not_found', 'Path provided was not found in database')
-            unless defined $nodeid;
+            unless $node;
 
 #       TODO This is wrong, but we should throw an error saying 'not a directory'. Requires refactoring
 #            a bit of code to make the 'fid' value available from the last node we fetched.
@@ -214,7 +214,7 @@ sub load {
         my %res;
         my $ct = 0;
         my $sto = Mgd::get_store();
-        my @nodes = $sto->plugin_filepaths_get_nodes_by_parent($dmid, $nodeid);
+        my @nodes = $sto->plugin_filepaths_get_nodes_by_parent($dmid, $node->id);
 
         # get FIDs for all the found nodes
         my %fids = (
@@ -289,9 +289,9 @@ sub load {
         # LOCK rename
 
         # find the node being renamed
-        my $old_parentid = load_path($dmid, $old_path);
         my $sto = Mgd::get_store();
-        my $node = $sto->plugin_filepaths_get_node_by_parent($dmid, $old_parentid, $old_name);
+        my $old_parent = load_path($dmid, $old_path);
+        my $node = $old_parent ? $sto->plugin_filepaths_get_node_by_parent($dmid, $old_parent->id, $old_name) : undef;
         return $self->err_line('path_not_found', 'Path provided was not found in database')
             unless $node;
 
@@ -340,8 +340,7 @@ sub vivify_path {
 sub load_path {
     my ($dmid, $path) = @_;
     return undef unless $dmid && $path;
-    my $node = _traverse_path($dmid, $path, 0);
-    return $node ? $node->id : undef;
+    return _traverse_path($dmid, $path, 0);
 }
 
 # does the internal work of traversing a path
@@ -398,12 +397,12 @@ sub _path_to_key {
     return 0 unless $path && $filename;
 
     # now try to get the end of the path
-    my $parentnodeid = MogileFS::Plugin::FilePaths::load_path( $dmid, $path );
-    return 0 unless defined $parentnodeid;
+    my $parentnode = load_path( $dmid, $path );
+    return 0 unless $parentnode;
 
     # great, find this file
     my $sto = Mgd::get_store();
-    my $node = $sto->plugin_filepaths_get_node_by_parent($dmid, $parentnodeid, $filename);
+    my $node = $sto->plugin_filepaths_get_node_by_parent($dmid, $parentnode->id, $filename);
     my $fidid = $node->fidid;
     return 0 unless $fidid;
 
