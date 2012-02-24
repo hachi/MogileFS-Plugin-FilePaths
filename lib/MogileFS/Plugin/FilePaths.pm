@@ -331,7 +331,6 @@ sub unload {
 # on error, else, 0-N is valid.
 sub vivify_path {
     my ($dmid, $path) = @_;
-    return undef unless $dmid && $path;
     return _traverse_path($dmid, $path, 1);
 }
 
@@ -339,7 +338,6 @@ sub vivify_path {
 # out if a path exists.  does NOT automatically create path elements that don't exist.
 sub load_path {
     my ($dmid, $path) = @_;
-    return undef unless $dmid && $path;
     return _traverse_path($dmid, $path, 0);
 }
 
