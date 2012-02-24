@@ -75,10 +75,13 @@ sub load {
         my $parentnode = vivify_path( $args->{dmid}, $path );
         return 0 unless defined $parentnode;
 
-        # find/create a node to store this file at, track the old FID in order
-        # to delete it after updating the node
+        # find any existing node, bail if we find a directory
         my $sto = Mgd::get_store();
         my $node = $sto->plugin_filepaths_get_node_by_parent($args->{dmid}, $parentnode->id, $filename);
+        return 0 if $node && $node->is_directory;
+
+        # update/create node to store this file at, track the old FID in order
+        # to delete it after updating the node
         my $oldfid = $node ? $node->fid : undef;
         if($node) {
             $sto->plugin_filepaths_update_node($node->id, {'fid' => $args->{fid}});
@@ -131,19 +134,17 @@ sub load {
         my $parentnode = load_path( $args->{dmid}, $path );
         return 0 unless $parentnode;
 
-        # get the fid of the file, bail out if it doesn't have one (directory nodes)
+        # find the file node and bail if it doesn't exist
         my $sto = Mgd::get_store();
         my $node = $sto->plugin_filepaths_get_node_by_parent($args->{dmid}, $parentnode->id, $filename);
-        return 0 unless $node;
-        my $fidid = $node->fidid;
-        return 0 unless $fidid;
+        return 0 unless $node && $node->is_file;
 
-        # great, delete this file
+        # update the key
+        $args->{key} = 'fid:' . $node->fidid;
+
+        # great, delete this node
         $sto->plugin_filepaths_delete_node($node->id);
         # FIXME What should happen if this delete fails?
-
-        # now pretend they asked for it and continue
-        $args->{key} = 'fid:' . $fidid;
     });
 
     MogileFS::register_worker_command( 'filepaths_enable', sub {
@@ -211,10 +212,7 @@ sub load {
         my @nodes = $sto->plugin_filepaths_get_nodes_by_parent($dmid, $node->id);
 
         # get FIDs for all the found nodes
-        my %fids = (
-            map {($_->id, $_)}
-                $sto->plugin_filepaths_load_fids(map {$_->fidid} @nodes)
-        );
+        my %fids = map {($_->id => $_)} $sto->plugin_filepaths_load_fids(map {$_->fidid} @nodes);
 
         # add all nodes to the response
         my $i = 0;
@@ -229,7 +227,7 @@ sub load {
                 $res{"$prefix.type"} = "D";
             }
             # This file is a regular file
-            elsif(my $fid = $fids{$node->fidid} || $node->fid) {
+            elsif($node->is_file && (my $fid = $fids{$node->fidid} || $node->fid)) {
                 # skip this node unless the fid exists
                 next unless $fid->exists;
 
