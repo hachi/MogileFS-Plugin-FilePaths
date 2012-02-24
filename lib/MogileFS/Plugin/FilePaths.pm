@@ -72,20 +72,20 @@ sub load {
         return 0 unless defined($path) && length($path) && defined($filename) && length($filename);
 
         # great, let's vivify that path and get the node to it
-        my $parentnodeid = MogileFS::Plugin::FilePaths::vivify_path( $args->{dmid}, $path );
-        return 0 unless defined $parentnodeid;
+        my $parentnode = vivify_path( $args->{dmid}, $path );
+        return 0 unless defined $parentnode;
 
         # find/create a node to store this file at, track the old FID in order
         # to delete it after updating the node
         my $sto = Mgd::get_store();
-        my $node = $sto->plugin_filepaths_get_node_by_parent($args->{dmid}, $parentnodeid, $filename);
+        my $node = $sto->plugin_filepaths_get_node_by_parent($args->{dmid}, $parentnode->id, $filename);
         my $oldfid = $node ? $node->fid : undef;
         if($node) {
             $sto->plugin_filepaths_update_node($node->id, {'fid' => $args->{fid}});
         } else {
             my $nodeid = $sto->plugin_filepaths_add_node(
                 'dmid'         => $args->{dmid},
-                'parentnodeid' => $parentnodeid,
+                'parentnodeid' => $parentnode->id,
                 'nodename'     => $filename,
                 'fid'          => $args->{fid},
             );
@@ -276,9 +276,10 @@ sub load {
             unless $node;
 
         # now vivify the destination path and rename the file
-        my $new_parentid = vivify_path($dmid, $new_path);
+        my $new_parent = vivify_path($dmid, $new_path);
+        return $self->err_line("rename_failed") unless $new_parent;
         my $rv = $sto->plugin_filepaths_update_node($node->id, {
-            'parentnodeid' => $new_parentid,
+            'parentnodeid' => $new_parent->id,
             'nodename'     => $new_name,
         });
 
@@ -311,8 +312,7 @@ sub unload {
 sub vivify_path {
     my ($dmid, $path) = @_;
     return undef unless $dmid && $path;
-    my $node = _traverse_path($dmid, $path, 1);
-    return $node ? $node->id : undef;
+    return _traverse_path($dmid, $path, 1);
 }
 
 # called to load the nodeid of the final element in a path, which is useful for finding
