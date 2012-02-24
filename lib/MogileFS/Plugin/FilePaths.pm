@@ -322,6 +322,10 @@ sub unload {
     MogileFS::unregister_global_hook( 'cmd_create_open' );
     MogileFS::unregister_global_hook( 'cmd_create_close' );
     MogileFS::unregister_global_hook( 'file_stored' );
+    MogileFS::unregister_global_hook( 'cmd_get_paths' );
+    MogileFS::unregister_global_hook( 'cmd_file_info' );
+    MogileFS::unregister_global_hook( 'cmd_file_debug' );
+    MogileFS::unregister_global_hook( 'cmd_delete' );
 
     return 1;
 }
