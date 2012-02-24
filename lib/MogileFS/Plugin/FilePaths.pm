@@ -579,35 +579,6 @@ sub plugin_filepaths_get_nodes_by_parent {
     return @nodes;
 }
 
-# return the nodeid for the specified node
-sub plugin_filepaths_get_nodeid {
-    my $self = shift;
-    my ($dmid, $parentnodeid, $nodename) = @_;
-    my $dbh = $self->dbh;
-    my $nodeid = $dbh->selectrow_array('SELECT nodeid FROM plugin_filepaths_paths ' .
-                                       'WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
-                                       undef, $dmid, $parentnodeid, $nodename);
-    return undef if $dbh->err;
-    return $nodeid;
-}
-
-# get all the nodes that are child nodes of the specified parent node
-sub plugin_filepaths_get_nodes_by_mapping {
-    my $self = shift;
-    my ($dmid, $parentnodeid) = @_;
-    my $dbh = $self->dbh;
-    my $sth = $dbh->prepare('SELECT nodename, fid FROM plugin_filepaths_paths ' .
-                            'WHERE dmid = ? AND parentnodeid = ?');
-    $sth->execute($dmid, $parentnodeid);
-
-    my @nodes;
-    while (my ($nodename, $fid) = $sth->fetchrow_array) {
-        push @nodes, [$nodename, $fid];
-    }
-
-    return @nodes;
-}
-
 # load the specified fids from the database
 sub plugin_filepaths_load_fids {
     my $self = shift;
@@ -624,20 +595,6 @@ sub plugin_filepaths_load_fids {
         push @ret, MogileFS::FID->new_from_db_row($row);
     }
     return @ret;
-}
-
-# takes a domain, parentnodeid, and filename and returns a MogileFS::FID object
-# for the found file
-sub plugin_filepaths_get_fid_by_mapping {
-    my $self = shift;
-    my ($dmid, $parentnodeid, $filename) = @_;
-
-    my $dbh = $self->dbh;
-    my ($fid) = $dbh->selectrow_array('SELECT fid FROM plugin_filepaths_paths ' .
-                                    'WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
-                                    undef, $dmid, $parentnodeid, $filename);
-    return undef unless $fid;
-    return MogileFS::FID->new($fid);
 }
 
 __PACKAGE__->add_extra_tables("plugin_filepaths_paths", "plugin_filepaths_domains");
