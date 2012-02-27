@@ -302,6 +302,43 @@ sub load {
         return $self->ok_line();
     });
 
+    MogileFS::register_worker_command( 'filepaths_remove_directory', sub {
+        my MogileFS::Worker::Query $self = shift;
+        my $args = shift;
+
+        # verify domain firstly
+        my $dmid = $self->check_domain($args)
+            or return $self->err_line('domain_not_found');
+
+        return $self->err_line("plugin_not_active_for_domain")
+            unless _check_dmid($dmid);
+
+        # verify arguments - make sure we have the right amount or arguments
+        return $self->err_line('bad_params')
+            unless $args->{argcount} == 1;
+
+        # verify arguments - path, make sure it starts with a /
+        my $path = $args->{arg1};
+        return $self->err_line('bad_params')
+            unless $path && $path =~ /^\//;
+
+        # now find the specified node
+        my $node = load_path( $dmid, $path );
+        return $self->err_line('path_not_found', 'Path provided was not found in database')
+            unless $node && $node->is_directory;
+
+        # check to see if the directory is empty
+        my $sto = Mgd::get_store();
+        my @nodes = $sto->plugin_filepaths_get_nodes_by_parent($dmid, $node->id);
+        return $self->err_line('directory_not_empty', 'Provided path was not empty')
+            if @nodes;
+
+        # delete this node
+        $sto->plugin_filepaths_delete_node($node->id);
+
+        return $self->ok_line();
+    });
+
     return 1;
 }
 
