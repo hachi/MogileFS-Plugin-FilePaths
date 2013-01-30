@@ -14,13 +14,9 @@ use warnings;
 our $VERSION = '0.03';
 $VERSION = eval $VERSION;
 
+use MogileFS::FID;
 use MogileFS::Worker::Query;
 use MogileFS::Plugin::MetaData;
-
-# called when this plugin is loaded, this sub must return a true value in order for
-# MogileFS to consider the plugin to have loaded successfully.  if you return a
-# non-true value, you MUST NOT install any handlers or other changes to the system.
-# if you install something here, you MUST un-install it in the unload sub.
 
 sub _parse_path {
     my $fullpath = shift;
@@ -30,6 +26,10 @@ sub _parse_path {
     return ($path, $file);
 }
 
+# called when this plugin is loaded, this sub must return a true value in order for
+# MogileFS to consider the plugin to have loaded successfully.  if you return a
+# non-true value, you MUST NOT install any handlers or other changes to the system.
+# if you install something here, you MUST un-install it in the unload sub.
 sub load {
 
     # we want to remove the key being passed to create_open, as it is going to contain
@@ -75,11 +75,10 @@ sub load {
         return 0 unless defined $parentnodeid;
 
         # see if this file exists already
-        my $oldfid = MogileFS::Plugin::FilePaths::get_file_mapping( $args->{dmid}, $parentnodeid, $filename );
-        if (defined $oldfid && $oldfid) {
-            my $dbh = Mgd::get_dbh();
-            $dbh->do("DELETE FROM file WHERE fid=?", undef, $oldfid);
-            $dbh->do("REPLACE INTO file_to_delete SET fid=?", undef, $oldfid);
+        my $sto = Mgd::get_store();
+        my $oldfid = $sto->plugin_filepaths_get_fid_by_mapping($args->{dmid}, $parentnodeid, $filename);
+        if ($oldfid) {
+            $oldfid->delete;
         }
 
         my $fid = $args->{fid};
@@ -106,6 +105,8 @@ sub load {
     # and now magic conversions that make the rest of the MogileFS commands work
     # without having to understand how the path system works
     MogileFS::register_global_hook( 'cmd_get_paths', \&_path_to_key );
+    MogileFS::register_global_hook( 'cmd_file_info', \&_path_to_key );
+    MogileFS::register_global_hook( 'cmd_file_debug', \&_path_to_key );
     MogileFS::register_global_hook( 'cmd_delete', sub {
         my $args = shift;
         return 1 unless _check_dmid($args->{dmid});
@@ -119,7 +120,8 @@ sub load {
         return 0 unless defined $parentnodeid;
 
         # get the fid of the file, bail out if it doesn't have one (directory nodes)
-        my $fid = MogileFS::Plugin::FilePaths::get_file_mapping( $args->{dmid}, $parentnodeid, $filename );
+        my $sto = Mgd::get_store();
+        my $fid = $sto->plugin_filepaths_get_fid_by_mapping($args->{dmid}, $parentnodeid, $filename);
         return 0 unless $fid;
 
         # great, delete this file
@@ -127,7 +129,7 @@ sub load {
         # FIXME What should happen if this delete fails?
 
         # now pretend they asked for it and continue
-        $args->{key} = "fid:$fid";
+        $args->{key} = 'fid:' . $fid->id;
     });
 
     MogileFS::register_worker_command( 'filepaths_enable', sub {
@@ -139,14 +141,11 @@ sub load {
         my $dmid = $self->check_domain($args)
             or return $self->err_line('domain_not_found');
 
-        my $dbh = Mgd::get_dbh();
-        return undef unless $dbh;
-
-        $dbh->do("REPLACE INTO plugin_filepaths_domains (dmid) VALUES (?)", undef, $dmid);
-
-        return $self->err_line('unable_to_enable', "Unable to enable the filepaths plugin: " . $dbh->errstr)
-            if $dbh->err;
-
+        # enable the FilePaths plugin for the specified domain
+        my $sto = Mgd::get_store();
+        unless ($sto->plugin_filepaths_enable_domain($dmid)) {
+            return $self->err_line('unable_to_enable', 'Unable to enable the FilePaths plugin');
+        }
         return $self->ok_line;
     });
 
@@ -159,14 +158,11 @@ sub load {
         my $dmid = $self->check_domain($args)
             or return $self->err_line('domain_not_found');
 
-        my $dbh = Mgd::get_dbh();
-        return undef unless $dbh;
-
-        $dbh->do("DELETE FROM plugin_filepaths_domains WHERE dmid = ?", undef, $dmid);
-
-        return $self->err_line('unable_to_disable', "Unable to enable the filepaths plugin: " . $dbh->errstr)
-            if $dbh->err;
-
+        # disable the FilePaths plugin for the specified domain
+        my $sto = Mgd::get_store();
+        unless ($sto->plugin_filepaths_disable_domain($dmid)) {
+            return $self->err_line('unable_to_disable', 'Unable to disable the FilePaths plugin');
+        }
         return $self->ok_line;
     });
 
@@ -203,21 +199,21 @@ sub load {
         # get files in path, return as an array
         my %res;
         my $ct = 0;
-        my @nodes = MogileFS::Plugin::FilePaths::list_directory( $dmid, $nodeid );
-        my $dbh = Mgd::get_dbh();
+        my $sto = Mgd::get_store();
+        my @nodes = $sto->plugin_filepaths_get_nodes_by_mapping($dmid, $nodeid);
 
         my $node_count = $res{'files'} = scalar @nodes;
 
         for(my $i = 0; $i < $node_count; $i++) {
-            my ($nodename, $fid) = @{$nodes[$i]};
+            my ($nodename, $fidid) = @{$nodes[$i]};
             my $prefix = "file$i";
             $res{$prefix} = $nodename;
 
-            if ($fid) { # This file is a regular file
+            if ($fidid) { # This file is a regular file
                 $res{"$prefix.type"} = "F";
-                my $length = $dbh->selectrow_array("SELECT length FROM file WHERE fid=?", undef, $fid);
+                my $length = MogileFS::FID->new($fidid)->length;
                 $res{"$prefix.size"} = $length if defined($length);
-                my $metadata = MogileFS::Plugin::MetaData::get_metadata($fid);
+                my $metadata = MogileFS::Plugin::MetaData::get_metadata($fidid);
                 $res{"$prefix.mtime"} = $metadata->{mtime} if $metadata->{mtime};
             } else {    # This file is a directory
                 $res{"$prefix.type"} = "D";
@@ -261,15 +257,16 @@ sub load {
         my $old_parentid = load_path($dmid, $old_path);
         my $new_parentid = vivify_path($dmid, $new_path);
 
-        my $dbh = Mgd::get_dbh();
-        return undef unless $dbh;
-
-        $dbh->do('UPDATE plugin_filepaths_paths SET parentnodeid=?, nodename=? WHERE dmid=? AND parentnodeid=? AND nodename=?', undef,
-                 $new_parentid, $new_name, $dmid, $old_parentid, $old_name);
+        my $sto = Mgd::get_store();
+        my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $old_parentid, $old_name);
+        my $rv = $sto->plugin_filepaths_update_node($nodeid, {
+            'parentnodeid' => $new_parentid,
+            'nodename'     => $new_name,
+        });
 
         # UNLOCK rename
 
-        return $self->err_line("rename_failed") if $dbh->err;
+        return $self->err_line("rename_failed") unless $rv;
 
         return $self->ok_line();
     });
@@ -315,14 +312,10 @@ sub _traverse_path {
     my @paths = grep { $_ } split /\//, $path;
     return 0 unless @paths; #toplevel
 
-    # FIXME: validate_dbh()? or not needed? assumed done elsewhere? bleh.
-    my $dbh = Mgd::get_dbh();
-    return undef unless $dbh;
-
     my $parentnodeid = 0;
     foreach my $node (@paths) {
         # try to get the id for this node
-        my $nodeid = _find_node($dbh, $dmid, $parentnodeid, $node, $vivify);
+        my $nodeid = _find_node($dmid, $parentnodeid, $node, $vivify);
         return undef unless $nodeid;
 
         # this becomes the new parent
@@ -335,21 +328,19 @@ sub _traverse_path {
 
 # checks to see if a node exists, and if not, creates it if $vivify is set
 sub _find_node {
-    my ($dbh, $dmid, $parentnodeid, $node, $vivify) = @_;
-    return undef unless $dbh && $dmid && defined $parentnodeid && $node;
+    my ($dmid, $parentnodeid, $node, $vivify) = @_;
+    return undef unless $dmid && defined $parentnodeid && $node;
 
-    my $nodeid = $dbh->selectrow_array('SELECT nodeid FROM plugin_filepaths_paths ' .
-                                       'WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
-                                       undef, $dmid, $parentnodeid, $node);
-    return undef if $dbh->err;
+    my $sto = Mgd::get_store();
+    my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $parentnodeid, $node);
     return $nodeid if $nodeid;
 
     if ($vivify) {
-        $dbh->do('INSERT INTO plugin_filepaths_paths (nodeid, dmid, parentnodeid, nodename, fid) ' .
-                 'VALUES (NULL, ?, ?, ?, NULL)', undef, $dmid, $parentnodeid, $node);
-        return undef if $dbh->err;
-
-        $nodeid = $dbh->{mysql_insertid}+0;
+        $nodeid = $sto->plugin_filepaths_add_node(
+            'dmid'         => $dmid,
+            'parentnodeid' => $parentnodeid,
+            'nodename'     => $node,
+        );
     }
 
     return undef unless $nodeid && $nodeid > 0;
@@ -361,65 +352,30 @@ sub set_file_mapping {
     my ($dmid, $parentnodeid, $filename, $fid) = @_;
     return undef unless $dmid && defined $parentnodeid && $filename && $fid;
 
-    my $dbh = Mgd::get_dbh();
-    return undef unless $dbh;
+    my $sto = Mgd::get_store();
+    my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $parentnodeid, $filename);
 
-    my $nodeid = _find_node($dbh, $dmid, $parentnodeid, $filename, 1);
-    return undef unless $nodeid;
-
-    $dbh->do("UPDATE plugin_filepaths_paths SET fid = ? WHERE nodeid = ?", undef, $fid, $nodeid);
-    return undef if $dbh->err;
+    unless ($nodeid) {
+        $nodeid = $sto->plugin_filepaths_add_node(
+            'dmid'         => $dmid,
+            'parentnodeid' => $parentnodeid,
+            'nodename'     => $filename,
+            'fid'          => $fid,
+        );
+    } else {
+        $sto->plugin_filepaths_update_node($nodeid, {'fid' => $fid});
+    }
     return $nodeid;
 }
 
-# given a domain and parent node and filename, return the fid
-sub get_file_mapping {
-    my ($dmid, $parentnodeid, $filename,) = @_;
-    return undef unless $dmid && defined $parentnodeid && $filename;
-
-    my $dbh = Mgd::get_dbh();
-    return undef unless $dbh;
-
-    my $fid = $dbh->selectrow_array('SELECT fid FROM plugin_filepaths_paths ' .
-                                    'WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
-                                    undef, $dmid, $parentnodeid, $filename);
-    return undef if $dbh->err;
-    return undef unless $fid && $fid > 0;
-    return $fid;
-}
-
 sub delete_file_mapping {
-    my ($dmid, $parentnodeid, $filename,) = @_;
+    my ($dmid, $parentnodeid, $filename) = @_;
     return undef unless $dmid && defined $parentnodeid && $filename;
 
-    my $dbh = Mgd::get_dbh();
-    return undef unless $dbh;
-
-    $dbh->do('DELETE FROM plugin_filepaths_paths WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
-             undef, $dmid, $parentnodeid, $filename);
-
-    return undef if $dbh->err;
-    return 1;
-}
-
-sub list_directory {
-    my ($dmid, $nodeid) = @_;
-
-    my $dbh = Mgd::get_dbh();
-    return undef unless $dbh;
-
-    my $sth = $dbh->prepare('SELECT nodename, fid FROM plugin_filepaths_paths ' .
-                            'WHERE dmid = ? AND parentnodeid = ?');
-
-    $sth->execute($dmid, $nodeid);
-
-    my @return;
-
-    while (my ($nodename, $fid) = $sth->fetchrow_array) {
-        push @return, [$nodename, $fid];
-    }
-
-    return @return;
+    my $sto = Mgd::get_store();
+    my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $parentnodeid, $filename);
+    return undef unless $nodeid;
+    return $sto->plugin_filepaths_delete_node($nodeid);
 }
 
 # generic sub that converts a file path to a key name that
@@ -440,15 +396,16 @@ sub _path_to_key {
     return 0 unless defined $parentnodeid;
 
     # great, find this file
-    my $fid = MogileFS::Plugin::FilePaths::get_file_mapping( $dmid, $parentnodeid, $filename );
-    return 0 unless defined $fid && $fid > 0;
+    my $sto = Mgd::get_store();
+    my $fid = $sto->plugin_filepaths_get_fid_by_mapping($dmid, $parentnodeid, $filename);
+    return 0 unless $fid;
 
     # now pretend they asked for it and continue
-    $args->{key} = "fid:$fid";
+    $args->{key} = 'fid:' . $fid->id;
     return 1;
 }
 
-my %active_dmids;
+my $active_dmids = {};
 my $last_dmid_check = 0;
 
 sub _check_dmid {
@@ -460,29 +417,20 @@ sub _check_dmid {
     if ($time >= $last_dmid_check + 15) {
         $last_dmid_check = $time;
 
-        unless (_load_dmids()) {
+        my $sto = Mgd::get_store();
+        my $dmids = $sto->plugin_filepaths_get_active_dmids();
+
+        if (defined $dmids) {
+            $active_dmids = {};
+            foreach (@$dmids) {
+                $active_dmids->{$_} = 1;
+            }
+        } else {
             warn "Unable to load active domains list for filepaths plugin, using old list";
         }
     }
 
-    return $active_dmids{$dmid};
-}
-
-sub _load_dmids {
-    my $dbh = Mgd::get_dbh();
-    return undef unless $dbh;
-
-    my $sth = $dbh->prepare('SELECT dmid FROM plugin_filepaths_domains');
-    $sth->execute();
-
-    return undef if $sth->err;
-
-    %active_dmids = ();
-
-    while (my $dmid = $sth->fetchrow_array) {
-        $active_dmids{$dmid} = 1;
-    }
-    return 1;
+    return $active_dmids->{$dmid};
 }
 
 package MogileFS::Store;
@@ -509,6 +457,123 @@ sub TABLE_plugin_filepaths_domains {
         dmid SMALLINT UNSIGNED NOT NULL,
         PRIMARY KEY (dmid)
 )"
+}
+
+# enable the filepaths plugin on the specified domain
+sub plugin_filepaths_enable_domain {
+    my $self = shift;
+    my ($dmid) = @_;
+    my $dbh = $self->dbh;
+    $self->retry_on_deadlock(sub {
+        $dbh->do($self->ignore_replace . 'INTO plugin_filepaths_domains (dmid) VALUES (?)', undef, $dmid);
+    });
+    return undef if($dbh->err);
+    return 1;
+}
+
+# disable the filepaths plugin on the specified domain
+sub plugin_filepaths_disable_domain {
+    my $self = shift;
+    my ($dmid) = @_;
+    my $dbh = $self->dbh;
+    $self->retry_on_deadlock(sub {
+        $dbh->do('DELETE FROM plugin_filepaths_domains WHERE dmid = ?', undef, $dmid);
+    });
+    return undef if($dbh->err);
+    return 1;
+}
+
+# retrieves an arrayref of dmids the filepaths plugin is active for
+sub plugin_filepaths_get_active_dmids {
+    my $self = shift;
+    my $dbh = $self->dbh;
+    my $dmids = $dbh->selectcol_arrayref('SELECT dmid FROM plugin_filepaths_domains');
+    return undef if $dbh->err;
+    return $dmids;
+}
+
+# add a new node to the database
+sub plugin_filepaths_add_node {
+    my $self = shift;
+    my %arg  = $self->_valid_params([qw(dmid parentnodeid nodename fid)], @_);
+
+    return $self->retry_on_deadlock(sub {
+        my $dbh = $self->dbh;
+        $dbh->do('INSERT INTO plugin_filepaths_paths (dmid, parentnodeid, nodename, fid) '.
+                 'VALUES (?,?,?,?) ', undef,
+                 @arg{'dmid', 'parentnodeid', 'nodename', 'fid'});
+        return $dbh->last_insert_id(undef, undef, 'plugin_filepaths_paths', 'nodeid')
+    });
+}
+
+# update the specified node in the database
+sub plugin_filepaths_update_node {
+    my $self = shift;
+    my ($nodeid, $to_update) = @_;
+    my @keys = keys %$to_update;
+    return 1 unless @keys;
+    my $dbh = $self->dbh;
+    $self->retry_on_deadlock(sub {
+        $dbh->do('UPDATE plugin_filepaths_paths SET ' . join('=?, ', @keys) .
+                 '=? WHERE nodeid = ?', undef, @$to_update{@keys}, $nodeid);
+    });
+    return undef if $dbh->err;
+    return 1;
+}
+
+# delete the specified node from the database
+sub plugin_filepaths_delete_node {
+    my $self = shift;
+    my ($nodeid) = @_;
+    my $dbh = $self->dbh;
+    $self->retry_on_deadlock(sub {
+        $dbh->do('DELETE FROM plugin_filepaths_paths WHERE nodeid = ?', undef, $nodeid);
+    });
+    return undef if $dbh->err;
+    return 1;
+}
+
+# return the nodeid for the specified node
+sub plugin_filepaths_get_nodeid {
+    my $self = shift;
+    my ($dmid, $parentnodeid, $nodename) = @_;
+    my $dbh = $self->dbh;
+    my $nodeid = $dbh->selectrow_array('SELECT nodeid FROM plugin_filepaths_paths ' .
+                                       'WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
+                                       undef, $dmid, $parentnodeid, $nodename);
+    return undef if $dbh->err;
+    return $nodeid;
+}
+
+# get all the nodes that are child nodes of the specified parent node
+sub plugin_filepaths_get_nodes_by_mapping {
+    my $self = shift;
+    my ($dmid, $parentnodeid) = @_;
+    my $dbh = $self->dbh;
+    my $sth = $dbh->prepare('SELECT nodename, fid FROM plugin_filepaths_paths ' .
+                            'WHERE dmid = ? AND parentnodeid = ?');
+    $sth->execute($dmid, $parentnodeid);
+
+    my @nodes;
+    while (my ($nodename, $fid) = $sth->fetchrow_array) {
+        push @nodes, [$nodename, $fid];
+    }
+
+    return @nodes;
+}
+
+# takes a domain, parentnodeid, and filename and returns a MogileFS::FID object
+# for the found file
+sub plugin_filepaths_get_fid_by_mapping {
+    my $self = shift;
+    my ($dmid, $parentnodeid, $filename) = @_;
+
+    my $dbh = $self->dbh;
+    my ($fid) = $dbh->selectrow_array('SELECT fid FROM plugin_filepaths_paths ' .
+                                    'WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
+                                    undef, $dmid, $parentnodeid, $filename);
+    return undef unless $fid;
+    return MogileFS::FID->new($fid);
 }
 
 __PACKAGE__->add_extra_tables("plugin_filepaths_paths", "plugin_filepaths_domains");
