@@ -1,3 +1,8 @@
+   -- Mike Baehr has added hooks to let this plugin be used with the info and
+      debug commands.
+   -- Daniel Frett has cleaned up and reworked all the SQL code to be in the
+      MogileFS::Store design and classes.
+
 0.03
    -- Fix SQL for rename command, wasn't hitting the DB index.
 
