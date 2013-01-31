@@ -122,6 +122,7 @@ sub load {
     MogileFS::register_global_hook( 'cmd_get_paths', \&_path_to_key );
     MogileFS::register_global_hook( 'cmd_file_info', \&_path_to_key );
     MogileFS::register_global_hook( 'cmd_file_debug', \&_path_to_key );
+    MogileFS::register_global_hook( 'cmd_updateclass', \&_path_to_key );
     MogileFS::register_global_hook( 'cmd_delete', sub {
         my $args = shift;
         return 1 unless _check_dmid($args->{dmid});
@@ -434,7 +435,7 @@ sub _path_to_key {
     # great, find this file
     my $sto = Mgd::get_store();
     my $node = $sto->plugin_filepaths_get_node_by_parent($dmid, $parentnode->id, $filename);
-    my $fidid = $node->fidid;
+    my $fidid = $node ? $node->fidid : undef;
     return 0 unless $fidid;
 
     # now pretend they asked for it and continue
