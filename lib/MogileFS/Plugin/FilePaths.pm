@@ -211,9 +211,13 @@ sub load {
         my $ct = 0;
         my $sto = Mgd::get_store();
         my @nodes = $sto->plugin_filepaths_get_nodes_by_parent($dmid, $node->id);
+        my @fidids = grep {$_} map {$_->fidid} @nodes;
 
         # get FIDs for all the found nodes
-        my %fids = map {($_->id => $_)} $sto->plugin_filepaths_load_fids(map {$_->fidid} @nodes);
+        my %fids = map {($_->id => $_)} $sto->plugin_filepaths_load_fids(@fidids);
+
+        # load the meta-data for all the fids
+        my $metadata = MogileFS::Plugin::MetaData::get_bulk_metadata(@fidids);
 
         # add all nodes to the response
         my $i = 0;
@@ -235,8 +239,8 @@ sub load {
                 $res{"$prefix.type"} = "F";
                 my $length = $fid->length;
                 $res{"$prefix.size"} = $length if defined($length);
-                my $metadata = MogileFS::Plugin::MetaData::get_metadata($fid->id);
-                $res{"$prefix.mtime"} = $metadata->{mtime} if $metadata->{mtime};
+                my $mtime = $metadata->{$fid->id}->{'mtime'};
+                $res{"$prefix.mtime"} = $mtime if $mtime;
             }
             # invalid node, don't include it in the response
             else {
