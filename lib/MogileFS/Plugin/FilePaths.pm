@@ -17,6 +17,7 @@ $VERSION = eval $VERSION;
 use MogileFS::FID;
 use MogileFS::Worker::Query;
 use MogileFS::Plugin::MetaData;
+use MogileFS::Plugin::FilePaths::Node;
 
 sub _parse_path {
     my $fullpath = shift;
@@ -71,22 +72,36 @@ sub load {
         return 0 unless defined($path) && length($path) && defined($filename) && length($filename);
 
         # great, let's vivify that path and get the node to it
-        my $parentnodeid = MogileFS::Plugin::FilePaths::vivify_path( $args->{dmid}, $path );
-        return 0 unless defined $parentnodeid;
+        my $parentnode = vivify_path( $args->{dmid}, $path );
+        return 0 unless defined $parentnode;
 
-        # see if this file exists already
+        # find any existing node, bail if we find a directory
         my $sto = Mgd::get_store();
-        my $oldfid = $sto->plugin_filepaths_get_fid_by_mapping($args->{dmid}, $parentnodeid, $filename);
+        my $node = $sto->plugin_filepaths_get_node_by_parent($args->{dmid}, $parentnode->id, $filename);
+        return 0 if $node && $node->is_directory;
+
+        # update/create node to store this file at, track the old FID in order
+        # to delete it after updating the node
+        my $oldfid = $node ? $node->fid : undef;
+        if($node) {
+            $sto->plugin_filepaths_update_node($node->id, {'fid' => $args->{fid}});
+        } else {
+            my $nodeid = $sto->plugin_filepaths_add_node(
+                'dmid'         => $args->{dmid},
+                'parentnodeid' => $parentnode->id,
+                'nodename'     => $filename,
+                'fid'          => $args->{fid},
+            );
+            $node = MogileFS::Plugin::FilePaths::Node->new($nodeid);
+        }
+        return 0 unless $node;
+
+        # delete the old FID now that the new FID has been stored
         if ($oldfid) {
             $oldfid->delete;
         }
 
-        my $fid = $args->{fid};
-
-        # and now, setup the mapping
-        my $nodeid = MogileFS::Plugin::FilePaths::set_file_mapping( $args->{dmid}, $parentnodeid, $filename, $fid );
-        return 0 unless $nodeid;
-
+        # store metadata
         if (my $keys = $args->{"plugin.meta.keys"}) {
             my %metadata;
             for (my $i = 0; $i < $keys; $i++) {
@@ -95,7 +110,7 @@ sub load {
                 $metadata{$key} = $value;
             }
 
-            MogileFS::Plugin::MetaData::set_metadata($fid, \%metadata);
+            MogileFS::Plugin::MetaData::set_metadata($args->{fid}, \%metadata);
         }
 
         # we're successful, let's keep the file
@@ -107,6 +122,7 @@ sub load {
     MogileFS::register_global_hook( 'cmd_get_paths', \&_path_to_key );
     MogileFS::register_global_hook( 'cmd_file_info', \&_path_to_key );
     MogileFS::register_global_hook( 'cmd_file_debug', \&_path_to_key );
+    MogileFS::register_global_hook( 'cmd_updateclass', \&_path_to_key );
     MogileFS::register_global_hook( 'cmd_delete', sub {
         my $args = shift;
         return 1 unless _check_dmid($args->{dmid});
@@ -116,20 +132,20 @@ sub load {
         return 0 unless defined($path) && length($path) && defined($filename) && length($filename);
 
         # now try to get the end of the path
-        my $parentnodeid = MogileFS::Plugin::FilePaths::load_path( $args->{dmid}, $path );
-        return 0 unless defined $parentnodeid;
+        my $parentnode = load_path( $args->{dmid}, $path );
+        return 0 unless $parentnode;
 
-        # get the fid of the file, bail out if it doesn't have one (directory nodes)
+        # find the file node and bail if it doesn't exist
         my $sto = Mgd::get_store();
-        my $fid = $sto->plugin_filepaths_get_fid_by_mapping($args->{dmid}, $parentnodeid, $filename);
-        return 0 unless $fid;
+        my $node = $sto->plugin_filepaths_get_node_by_parent($args->{dmid}, $parentnode->id, $filename);
+        return 0 unless $node && $node->is_file;
 
-        # great, delete this file
-        delete_file_mapping( $args->{dmid}, $parentnodeid, $filename );
+        # update the key
+        $args->{key} = 'fid:' . $node->fidid;
+
+        # great, delete this node
+        $sto->plugin_filepaths_delete_node($node->id);
         # FIXME What should happen if this delete fails?
-
-        # now pretend they asked for it and continue
-        $args->{key} = 'fid:' . $fid->id;
     });
 
     MogileFS::register_worker_command( 'filepaths_enable', sub {
@@ -186,39 +202,54 @@ sub load {
             unless $args->{argcount} == 1 && $path && $path =~ /^\//;
 
         # now find the id of the path
-        my $nodeid = MogileFS::Plugin::FilePaths::load_path( $dmid, $path );
+        my $node = load_path( $dmid, $path );
         return $self->err_line('path_not_found', 'Path provided was not found in database')
-            unless defined $nodeid;
-
-#       TODO This is wrong, but we should throw an error saying 'not a directory'. Requires refactoring
-#            a bit of code to make the 'fid' value available from the last node we fetched.
-#        if (get_file_mapping($nodeid)) {
-#            return $self->err_line('not_a_directory', 'Path provided is not a directory');
-#        }
+            unless $node;
 
         # get files in path, return as an array
         my %res;
         my $ct = 0;
         my $sto = Mgd::get_store();
-        my @nodes = $sto->plugin_filepaths_get_nodes_by_mapping($dmid, $nodeid);
+        my @nodes = $sto->plugin_filepaths_get_nodes_by_parent($dmid, $node->id);
+        my @fidids = grep {$_} map {$_->fidid} @nodes;
 
-        my $node_count = $res{'files'} = scalar @nodes;
+        # get FIDs for all the found nodes
+        my %fids = map {($_->id => $_)} $sto->plugin_filepaths_load_fids(@fidids);
 
-        for(my $i = 0; $i < $node_count; $i++) {
-            my ($nodename, $fidid) = @{$nodes[$i]};
+        # load the meta-data for all the fids
+        my $metadata = MogileFS::Plugin::MetaData::get_bulk_metadata(@fidids);
+
+        # add all nodes to the response
+        my $i = 0;
+        foreach my $node (@nodes) {
+            next if(!$node);
+
             my $prefix = "file$i";
-            $res{$prefix} = $nodename;
+            $res{$prefix} = $node->nodename;
 
-            if ($fidid) { # This file is a regular file
-                $res{"$prefix.type"} = "F";
-                my $length = MogileFS::FID->new($fidid)->length;
-                $res{"$prefix.size"} = $length if defined($length);
-                my $metadata = MogileFS::Plugin::MetaData::get_metadata($fidid);
-                $res{"$prefix.mtime"} = $metadata->{mtime} if $metadata->{mtime};
-            } else {    # This file is a directory
+            # This node is a directory
+            if ($node->is_directory) {
                 $res{"$prefix.type"} = "D";
             }
+            # This file is a regular file
+            elsif($node->is_file && (my $fid = $fids{$node->fidid} || $node->fid)) {
+                # skip this node unless the fid exists
+                next unless $fid->exists;
+
+                $res{"$prefix.type"} = "F";
+                my $length = $fid->length;
+                $res{"$prefix.size"} = $length if defined($length);
+                my $mtime = $metadata->{$fid->id}->{'mtime'};
+                $res{"$prefix.mtime"} = $mtime if $mtime;
+            }
+            # invalid node, don't include it in the response
+            else {
+                next;
+            }
+
+            $i++;
         }
+        $res{'files'} = $i;
 
         return $self->ok_line( \%res );
     });
@@ -254,19 +285,61 @@ sub load {
 
         # LOCK rename
 
-        my $old_parentid = load_path($dmid, $old_path);
-        my $new_parentid = vivify_path($dmid, $new_path);
-
+        # find the node being renamed
         my $sto = Mgd::get_store();
-        my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $old_parentid, $old_name);
-        my $rv = $sto->plugin_filepaths_update_node($nodeid, {
-            'parentnodeid' => $new_parentid,
+        my $old_parent = load_path($dmid, $old_path);
+        my $node = $old_parent ? $sto->plugin_filepaths_get_node_by_parent($dmid, $old_parent->id, $old_name) : undef;
+        return $self->err_line('path_not_found', 'Path provided was not found in database')
+            unless $node;
+
+        # now vivify the destination path and rename the file
+        my $new_parent = vivify_path($dmid, $new_path);
+        return $self->err_line("rename_failed") unless $new_parent;
+        my $rv = $sto->plugin_filepaths_update_node($node->id, {
+            'parentnodeid' => $new_parent->id,
             'nodename'     => $new_name,
         });
 
         # UNLOCK rename
 
         return $self->err_line("rename_failed") unless $rv;
+
+        return $self->ok_line();
+    });
+
+    MogileFS::register_worker_command( 'filepaths_remove_directory', sub {
+        my MogileFS::Worker::Query $self = shift;
+        my $args = shift;
+
+        # verify domain firstly
+        my $dmid = $self->check_domain($args)
+            or return $self->err_line('domain_not_found');
+
+        return $self->err_line("plugin_not_active_for_domain")
+            unless _check_dmid($dmid);
+
+        # verify arguments - make sure we have the right amount or arguments
+        return $self->err_line('bad_params')
+            unless $args->{argcount} == 1;
+
+        # verify arguments - path, make sure it starts with a /
+        my $path = $args->{arg1};
+        return $self->err_line('bad_params')
+            unless $path && $path =~ /^\//;
+
+        # now find the specified node
+        my $node = load_path( $dmid, $path );
+        return $self->err_line('path_not_found', 'Path provided was not found in database')
+            unless $node && $node->is_directory;
+
+        # check to see if the directory is empty
+        my $sto = Mgd::get_store();
+        my @nodes = $sto->plugin_filepaths_get_nodes_by_parent($dmid, $node->id);
+        return $self->err_line('directory_not_empty', 'Provided path was not empty')
+            if @nodes;
+
+        # delete this node
+        $sto->plugin_filepaths_delete_node($node->id);
 
         return $self->ok_line();
     });
@@ -283,6 +356,10 @@ sub unload {
     MogileFS::unregister_global_hook( 'cmd_create_open' );
     MogileFS::unregister_global_hook( 'cmd_create_close' );
     MogileFS::unregister_global_hook( 'file_stored' );
+    MogileFS::unregister_global_hook( 'cmd_get_paths' );
+    MogileFS::unregister_global_hook( 'cmd_file_info' );
+    MogileFS::unregister_global_hook( 'cmd_file_debug' );
+    MogileFS::unregister_global_hook( 'cmd_delete' );
 
     return 1;
 }
@@ -292,7 +369,6 @@ sub unload {
 # on error, else, 0-N is valid.
 sub vivify_path {
     my ($dmid, $path) = @_;
-    return undef unless $dmid && $path;
     return _traverse_path($dmid, $path, 1);
 }
 
@@ -300,7 +376,6 @@ sub vivify_path {
 # out if a path exists.  does NOT automatically create path elements that don't exist.
 sub load_path {
     my ($dmid, $path) = @_;
-    return undef unless $dmid && $path;
     return _traverse_path($dmid, $path, 0);
 }
 
@@ -309,73 +384,40 @@ sub _traverse_path {
     my ($dmid, $path, $vivify) = @_;
     return undef unless $dmid && $path;
 
-    my @paths = grep { $_ } split /\//, $path;
-    return 0 unless @paths; #toplevel
+    # start with the root path node
+    my $node = MogileFS::Plugin::FilePaths::Node->new(0);
 
-    my $parentnodeid = 0;
-    foreach my $node (@paths) {
-        # try to get the id for this node
-        my $nodeid = _find_node($dmid, $parentnodeid, $node, $vivify);
-        return undef unless $nodeid;
-
-        # this becomes the new parent
-        $parentnodeid = $nodeid;
+    # recurse the specified path
+    foreach my $part (grep { $_ } split /\//, $path) {
+        # look for the current path part
+        $node = _find_node($dmid, $node->id, $part, $vivify);
+        return undef unless $node && $node->is_directory;
     }
 
-    # we're done, so the parentnodeid is what we return
-    return $parentnodeid;
+    # we're done, so return the most recent node
+    return $node;
 }
 
 # checks to see if a node exists, and if not, creates it if $vivify is set
 sub _find_node {
-    my ($dmid, $parentnodeid, $node, $vivify) = @_;
-    return undef unless $dmid && defined $parentnodeid && $node;
+    my ($dmid, $parentnodeid, $name, $vivify) = @_;
+    return undef unless $dmid && defined $parentnodeid && $name;
 
     my $sto = Mgd::get_store();
-    my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $parentnodeid, $node);
-    return $nodeid if $nodeid;
+    my $node = $sto->plugin_filepaths_get_node_by_parent($dmid, $parentnodeid, $name);
+    return $node if $node;
 
     if ($vivify) {
-        $nodeid = $sto->plugin_filepaths_add_node(
+        my $nodeid = $sto->plugin_filepaths_add_node(
             'dmid'         => $dmid,
             'parentnodeid' => $parentnodeid,
-            'nodename'     => $node,
+            'nodename'     => $name,
         );
+
+        return MogileFS::Plugin::FilePaths::Node->new($nodeid) if $nodeid && $nodeid > 0;
     }
 
-    return undef unless $nodeid && $nodeid > 0;
-    return $nodeid;
-}
-
-# sets the mapping of a file from a name to a fid
-sub set_file_mapping {
-    my ($dmid, $parentnodeid, $filename, $fid) = @_;
-    return undef unless $dmid && defined $parentnodeid && $filename && $fid;
-
-    my $sto = Mgd::get_store();
-    my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $parentnodeid, $filename);
-
-    unless ($nodeid) {
-        $nodeid = $sto->plugin_filepaths_add_node(
-            'dmid'         => $dmid,
-            'parentnodeid' => $parentnodeid,
-            'nodename'     => $filename,
-            'fid'          => $fid,
-        );
-    } else {
-        $sto->plugin_filepaths_update_node($nodeid, {'fid' => $fid});
-    }
-    return $nodeid;
-}
-
-sub delete_file_mapping {
-    my ($dmid, $parentnodeid, $filename) = @_;
-    return undef unless $dmid && defined $parentnodeid && $filename;
-
-    my $sto = Mgd::get_store();
-    my $nodeid = $sto->plugin_filepaths_get_nodeid($dmid, $parentnodeid, $filename);
-    return undef unless $nodeid;
-    return $sto->plugin_filepaths_delete_node($nodeid);
+    return undef;
 }
 
 # generic sub that converts a file path to a key name that
@@ -387,21 +429,21 @@ sub _path_to_key {
     return 1 unless _check_dmid($dmid);
 
     # ensure we got a valid seeming path and filename
-    my ($path, $filename) =
-        ($args->{key} =~ m!^(/(?:[\w\-\.]+/)*)([\w\-\.]+)$!) ? ($1, $2) : (undef, undef);
+    my ($path, $filename) = _parse_path($args->{key});
     return 0 unless $path && $filename;
 
     # now try to get the end of the path
-    my $parentnodeid = MogileFS::Plugin::FilePaths::load_path( $dmid, $path );
-    return 0 unless defined $parentnodeid;
+    my $parentnode = load_path( $dmid, $path );
+    return 0 unless $parentnode;
 
     # great, find this file
     my $sto = Mgd::get_store();
-    my $fid = $sto->plugin_filepaths_get_fid_by_mapping($dmid, $parentnodeid, $filename);
-    return 0 unless $fid;
+    my $node = $sto->plugin_filepaths_get_node_by_parent($dmid, $parentnode->id, $filename);
+    my $fidid = $node ? $node->fidid : undef;
+    return 0 unless $fidid;
 
     # now pretend they asked for it and continue
-    $args->{key} = 'fid:' . $fid->id;
+    $args->{key} = 'fid:' . $fidid;
     return 1;
 }
 
@@ -533,47 +575,61 @@ sub plugin_filepaths_delete_node {
     return 1;
 }
 
-# return the nodeid for the specified node
-sub plugin_filepaths_get_nodeid {
+#returns a hash ref containing
+sub plugin_filepaths_node_row_from_nodeid {
+    my ($self, $nodeid) = @_;
+    return $self->dbh->selectrow_hashref("SELECT nodeid, dmid, parentnodeid, nodename, fid ".
+                                         "FROM plugin_filepaths_paths WHERE nodeid=?",
+                                         undef, $nodeid);
+}
+
+# return the node for the specified node
+sub plugin_filepaths_get_node_by_parent {
     my $self = shift;
     my ($dmid, $parentnodeid, $nodename) = @_;
     my $dbh = $self->dbh;
-    my $nodeid = $dbh->selectrow_array('SELECT nodeid FROM plugin_filepaths_paths ' .
-                                       'WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
-                                       undef, $dmid, $parentnodeid, $nodename);
-    return undef if $dbh->err;
-    return $nodeid;
+    my $row = $dbh->selectrow_hashref('SELECT nodeid, dmid, parentnodeid, nodename, fid ' .
+                                      'FROM plugin_filepaths_paths ' .
+                                      'WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
+                                      undef, $dmid, $parentnodeid, $nodename);
+    return undef if !$row || $dbh->err;
+    return MogileFS::Plugin::FilePaths::Node->new_from_db_row($row);
 }
 
 # get all the nodes that are child nodes of the specified parent node
-sub plugin_filepaths_get_nodes_by_mapping {
+sub plugin_filepaths_get_nodes_by_parent {
     my $self = shift;
     my ($dmid, $parentnodeid) = @_;
     my $dbh = $self->dbh;
-    my $sth = $dbh->prepare('SELECT nodename, fid FROM plugin_filepaths_paths ' .
+    my $sth = $dbh->prepare('SELECT nodeid, dmid, parentnodeid, nodename, fid ' .
+                            'FROM plugin_filepaths_paths ' .
                             'WHERE dmid = ? AND parentnodeid = ?');
     $sth->execute($dmid, $parentnodeid);
 
     my @nodes;
-    while (my ($nodename, $fid) = $sth->fetchrow_array) {
-        push @nodes, [$nodename, $fid];
+    while (my $row = $sth->fetchrow_hashref()) {
+        push @nodes, MogileFS::Plugin::FilePaths::Node->new_from_db_row($row);
     }
 
     return @nodes;
 }
 
-# takes a domain, parentnodeid, and filename and returns a MogileFS::FID object
-# for the found file
-sub plugin_filepaths_get_fid_by_mapping {
+# load the specified fids from the database
+sub plugin_filepaths_load_fids {
     my $self = shift;
-    my ($dmid, $parentnodeid, $filename) = @_;
+    my @fids = @_;
+    return if(!@fids);
 
+    my @ret;
     my $dbh = $self->dbh;
-    my ($fid) = $dbh->selectrow_array('SELECT fid FROM plugin_filepaths_paths ' .
-                                    'WHERE dmid = ? AND parentnodeid = ? AND nodename = ?',
-                                    undef, $dmid, $parentnodeid, $filename);
-    return undef unless $fid;
-    return MogileFS::FID->new($fid);
+    my $sth = $dbh->prepare("SELECT fid, dmid, dkey, length, classid, devcount ".
+                            "FROM   file ".
+                            "WHERE  fid IN (". join(',', (('?') x scalar @fids)) . ")");
+    $sth->execute(@fids);
+    while (my $row = $sth->fetchrow_hashref) {
+        push @ret, MogileFS::FID->new_from_db_row($row);
+    }
+    return @ret;
 }
 
 __PACKAGE__->add_extra_tables("plugin_filepaths_paths", "plugin_filepaths_domains");
